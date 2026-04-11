@@ -84,6 +84,9 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
+      <div className="px-4 py-2 border-t">
+        <span className="text-[10px] text-muted-foreground">v{APP_VERSION}</span>
+      </div>
     </aside>
   )
 }
