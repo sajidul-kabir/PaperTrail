@@ -14,3 +14,4 @@ publish:
   provider: github
   owner: Sajidul-Kabir
   repo: PaperTrail
+  releaseType: release

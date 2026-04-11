@@ -83,10 +83,13 @@ app.whenReady().then(() => {
     })
 
     autoUpdater.on('error', (err) => {
-      console.error('Auto-update error:', err)
+      // Silently log — don't show error dialog for update failures
+      console.log('Auto-update check failed (no internet or repo not accessible):', err.message)
     })
 
-    autoUpdater.checkForUpdates()
+    autoUpdater.checkForUpdates().catch(() => {
+      // Swallow — no internet or repo not accessible
+    })
   }
 })
 
