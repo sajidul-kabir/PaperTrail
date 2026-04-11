@@ -1,0 +1,16 @@
+appId: com.papertrail.app
+productName: PaperTrail
+directories:
+  output: release
+files:
+  - dist
+  - dist-electron
+win:
+  target: nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+publish:
+  provider: github
+  owner: Sajidul-Kabir
+  repo: PaperTrail
