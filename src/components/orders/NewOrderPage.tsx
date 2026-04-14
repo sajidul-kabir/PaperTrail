@@ -10,6 +10,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
+import { piecesPerSheet } from '@/lib/calculations'
 import { formatBDT, formatNumber, todayISO, bdtToPoisha, profitColor, formatSize, poishaToBdt } from '@/lib/utils'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -22,10 +23,11 @@ interface CuttingStockItem {
   total_pieces: number; avg_cost_per_piece_poisha: number
   label: string; category: string
   brand_name: string; gsm_value: number
+  sheet_width: number | null; sheet_height: number | null
 }
 
 interface LineItem {
-  id: string; stockKey: string; quantity: string; selling_price: string; itemFilter: string; totalOverride: string
+  id: string; stockKey: string; quantity: string; selling_price: string; itemFilter: string; totalOverride: string; categoryFilter: string
 }
 
 // ─── SQL ──────────────────────────────────────────────────────────────────────
@@ -46,7 +48,9 @@ const CUTTING_STOCK_SQL = `
     ) as label,
     COALESCE(pt.category, 'ACCESSORY') as category,
     COALESCE(b.name, at.name, '') as brand_name,
-    COALESCE(g.value, ag.value, 0) as gsm_value
+    COALESCE(g.value, ag.value, 0) as gsm_value,
+    p.width_inches as sheet_width,
+    p.height_inches as sheet_height
   FROM cutting_stock cs
   LEFT JOIN paper_types pt ON pt.id = cs.paper_type_id
   LEFT JOIN brands b ON b.id = pt.brand_id
@@ -67,7 +71,7 @@ function stockKey(item: CuttingStockItem): string {
   return `${item.paper_type_id || ''}|${item.accessory_id || ''}|${item.cut_width_inches ?? ''}|${item.cut_height_inches ?? ''}`
 }
 function emptyLine(): LineItem {
-  return { id: uuid(), stockKey: '', quantity: '', selling_price: '', itemFilter: '', totalOverride: '' }
+  return { id: uuid(), stockKey: '', quantity: '', selling_price: '', itemFilter: '', totalOverride: '', categoryFilter: '' }
 }
 function parseNum(s: string): number { const n = parseFloat(s); return isNaN(n) ? 0 : n }
 function categoryBadgeClass(cat: string): string {
@@ -132,7 +136,12 @@ export function NewOrderPage() {
     const price = parseNum(line.selling_price)
     if (qty <= 0 || price <= 0) return null
     const pricePoisha = bdtToPoisha(price)
-    const sellingPerPiece = item.category === 'PAPER' ? pricePoisha / 1000 : pricePoisha
+    const pps = (item.category === 'CARD' || item.category === 'STICKER') && item.cut_width_inches && item.cut_height_inches && item.sheet_width && item.sheet_height
+      ? piecesPerSheet(Math.min(item.cut_width_inches, item.cut_height_inches), Math.max(item.cut_width_inches, item.cut_height_inches), item.sheet_width, item.sheet_height)
+      : 0
+    const sellingPerPiece = item.category === 'PAPER' ? pricePoisha / 1000
+      : (item.category === 'CARD' || item.category === 'STICKER') && pps > 0 ? pricePoisha / pps
+      : pricePoisha
     const rawTotal = qty * sellingPerPiece
     const lineTotal = line.totalOverride ? bdtToPoisha(parseNum(line.totalOverride)) : Math.ceil(rawTotal / 100) * 100
     const costPerPiece = item.avg_cost_per_piece_poisha
@@ -238,9 +247,13 @@ export function NewOrderPage() {
         const r = calcLine(line)
         const selected = stockMap.get(line.stockKey)
         const cat = selected?.category ?? 'PAPER'
-        const filteredItems = line.itemFilter
-          ? cuttingStock.filter(item => `${item.category} ${dropdownLabel(item)}`.toLowerCase().includes(line.itemFilter.toLowerCase()))
+        const catFiltered = line.categoryFilter
+          ? cuttingStock.filter(item => item.category === line.categoryFilter)
           : cuttingStock
+        const filteredItems = line.itemFilter
+          ? catFiltered.filter(item => `${item.category} ${dropdownLabel(item)}`.toLowerCase().includes(line.itemFilter.toLowerCase()))
+          : catFiltered
+        const categoryTabs = ['', 'PAPER', 'CARD', 'STICKER', 'ACCESSORY'] as const
 
         return (
           <Card key={line.id}>
@@ -252,7 +265,14 @@ export function NewOrderPage() {
                     <Badge variant={cat === 'PAPER' ? 'secondary' : 'outline'} className={`text-[10px] px-1.5 py-0 ${categoryBadgeClass(cat)}`}>{cat}</Badge>
                     <span className="text-sm font-medium text-primary">{dropdownLabel(selected)}</span>
                     <span className="text-xs text-muted-foreground">
-                      ({selected.avg_cost_per_piece_poisha > 0 ? formatBDT(Math.round(selected.avg_cost_per_piece_poisha)) + '/pc' : 'no cost'})
+                      ({selected.avg_cost_per_piece_poisha > 0 ? (() => {
+                        const costPc = formatBDT(Math.round(selected.avg_cost_per_piece_poisha))
+                        if ((cat === 'CARD' || cat === 'STICKER') && selected.cut_width_inches && selected.cut_height_inches && selected.sheet_width && selected.sheet_height) {
+                          const pps = piecesPerSheet(Math.min(selected.cut_width_inches, selected.cut_height_inches), Math.max(selected.cut_width_inches, selected.cut_height_inches), selected.sheet_width, selected.sheet_height)
+                          if (pps > 0) return `${formatBDT(Math.round(selected.avg_cost_per_piece_poisha * pps))}/sheet, ${costPc}/pc`
+                        }
+                        return `${costPc}/pc`
+                      })() : 'no cost'})
                     </span>
                   </div>
                 )}
@@ -264,7 +284,18 @@ export function NewOrderPage() {
                 <Select value={line.stockKey} onValueChange={v => updateLine(line.id, { stockKey: v })}>
                   <SelectTrigger className="h-9"><SelectValue placeholder="Select item..." /></SelectTrigger>
                   <SelectContent className="max-h-72" header={
-                    <Input placeholder="Search..." value={line.itemFilter} onChange={e => updateLine(line.id, { itemFilter: e.target.value })} onKeyDown={e => e.stopPropagation()} className="h-8 text-sm" />
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex gap-1">
+                        {categoryTabs.map(t => (
+                          <button key={t || 'ALL'} type="button"
+                            className={`px-2 py-0.5 text-[10px] font-semibold rounded ${line.categoryFilter === t ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
+                            onPointerDown={e => { e.preventDefault(); e.stopPropagation(); updateLine(line.id, { categoryFilter: t }) }}>
+                            {t || 'All'}
+                          </button>
+                        ))}
+                      </div>
+                      <Input placeholder="Search..." value={line.itemFilter} onChange={e => updateLine(line.id, { itemFilter: e.target.value })} onKeyDown={e => e.stopPropagation()} className="h-8 text-sm" />
+                    </div>
                   }>
                     {filteredItems.length === 0 ? <div className="py-3 text-center text-sm text-muted-foreground">No items</div>
                      : filteredItems.map(item => {
@@ -272,6 +303,9 @@ export function NewOrderPage() {
                       return (
                         <SelectItem key={key} value={key}>
                           <div className="flex items-center gap-2">
+                            <span className={`text-[9px] font-semibold px-1 rounded ${categoryBadgeClass(item.category)} ${item.category === 'PAPER' ? 'bg-secondary text-secondary-foreground' : ''}`}>
+                              {item.category.charAt(0)}
+                            </span>
                             <span>{shortLabel(item)}</span>
                             <span className="text-muted-foreground text-xs ml-auto">{formatNumber(item.total_pieces)} pcs</span>
                           </div>
@@ -292,7 +326,7 @@ export function NewOrderPage() {
                   <Input className="h-9" type="number" min="0" step="1" value={line.quantity} onChange={e => updateLine(line.id, { quantity: e.target.value })} />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <Label className="text-xs">{cat === 'PAPER' ? 'Price / 1000 pcs (৳)' : 'Price / piece (৳)'}</Label>
+                  <Label className="text-xs">{cat === 'PAPER' ? 'Price / 1000 pcs (৳)' : (cat === 'CARD' || cat === 'STICKER') ? 'Price / sheet (৳)' : 'Price / piece (৳)'}</Label>
                   <Input className="h-9" type="number" min="0" step="1" value={line.selling_price} onChange={e => updateLine(line.id, { selling_price: e.target.value })} />
                 </div>
               </div>

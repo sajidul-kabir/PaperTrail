@@ -3,6 +3,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { autoUpdater } from 'electron-updater'
 import { initDatabase, getDb } from './database/db'
+import { runBackup, getBackupInfo, setCloudBackupPath, restoreFromBackup, restoreFromFile, scheduleBackupAfterWrite, stopBackupTimer } from './backup'
 
 // Global error handlers — log and show dialog so crashes aren't silent
 process.on('uncaughtException', (err) => {
@@ -46,6 +47,11 @@ function createWindow() {
 }
 
 app.on('window-all-closed', () => {
+  // Backup before quitting
+  try {
+    stopBackupTimer()
+    runBackup()
+  } catch { /* don't block quit */ }
   app.quit()
   win = null
 })
@@ -103,6 +109,7 @@ function registerIpcHandlers() {
         return { success: true, data: stmt.all(...(params || [])) }
       } else {
         const result = stmt.run(...(params || []))
+        scheduleBackupAfterWrite()
         return { success: true, data: result }
       }
     } catch (err: any) {
@@ -126,9 +133,100 @@ function registerIpcHandlers() {
     })
     try {
       const results = transaction()
+      scheduleBackupAfterWrite()
       return { success: true, data: results }
     } catch (err: any) {
       return { success: false, error: err.message }
     }
+  })
+
+  // Backup IPC handlers
+  ipcMain.handle('backup:run', async () => {
+    try { return { success: true, data: runBackup() } }
+    catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('backup:info', async () => {
+    try { return { success: true, data: getBackupInfo() } }
+    catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('backup:setCloudPath', async (_event, folderPath: string | null) => {
+    try { setCloudBackupPath(folderPath); return { success: true } }
+    catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('backup:restore', async (_event, fileName: string) => {
+    if (!win) return { success: false, error: 'No window' }
+    const { dialog } = await import('electron')
+    const confirm = await dialog.showMessageBox(win, {
+      type: 'warning',
+      title: 'Restore Backup',
+      message: `Restore from ${fileName}? This will replace all current data. The app will restart.`,
+      buttons: ['Cancel', 'Restore'],
+      defaultId: 0,
+    })
+    if (confirm.response !== 1) return { success: false, error: 'Cancelled' }
+
+    // Checkpoint WAL, then close DB before restoring
+    try {
+      const db = getDb()
+      db.pragma('wal_checkpoint(TRUNCATE)')
+      db.close()
+    } catch { /* ignore */ }
+
+    const result = restoreFromBackup(fileName)
+    if (result.success) {
+      // Reinitialize DB from restored file and reload window
+      initDatabase()
+      if (win) win.reload()
+    }
+    return result
+  })
+
+  ipcMain.handle('backup:pickFolder', async () => {
+    if (!win) return { success: false, error: 'No window' }
+    const { dialog } = await import('electron')
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Select Cloud Backup Folder',
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    if (result.canceled || result.filePaths.length === 0) return { success: true, data: null }
+    return { success: true, data: result.filePaths[0] }
+  })
+
+  ipcMain.handle('backup:restoreFromFile', async () => {
+    if (!win) return { success: false, error: 'No window' }
+    const { dialog } = await import('electron')
+
+    const pick = await dialog.showOpenDialog(win, {
+      title: 'Select Backup File to Restore',
+      filters: [{ name: 'Database', extensions: ['db'] }],
+      properties: ['openFile'],
+    })
+    if (pick.canceled || pick.filePaths.length === 0) return { success: false, error: 'Cancelled' }
+
+    const filePath = pick.filePaths[0]
+    const confirm = await dialog.showMessageBox(win, {
+      type: 'warning',
+      title: 'Restore from File',
+      message: `Restore from "${path.basename(filePath)}"?\n\nThis will replace ALL current data. The app will restart.`,
+      buttons: ['Cancel', 'Restore'],
+      defaultId: 0,
+    })
+    if (confirm.response !== 1) return { success: false, error: 'Cancelled' }
+
+    try {
+      const db = getDb()
+      db.pragma('wal_checkpoint(TRUNCATE)')
+      db.close()
+    } catch { /* ignore */ }
+
+    const result = restoreFromFile(filePath)
+    if (result.success) {
+      initDatabase()
+      if (win) win.reload()
+    }
+    return result
   })
 }

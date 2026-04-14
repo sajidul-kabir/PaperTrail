@@ -11,7 +11,9 @@ import { Calendar } from '@/components/ui/calendar'
 import * as Popover from '@radix-ui/react-popover'
 import { useToast } from '@/components/ui/toast'
 import { formatDate, formatNumber, formatSize, todayISO } from '@/lib/utils'
-import { ChevronLeft, ChevronRight, CalendarDays } from 'lucide-react'
+import { unitLabel } from '@/lib/paper-type'
+import type { Category } from '@/lib/paper-type'
+import { ChevronLeft, ChevronRight, CalendarDays, Printer } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -45,7 +47,11 @@ const TRANSFERS_SQL = `
     tl.total_cut_pieces,
     tl.waste_area_per_sheet,
     tl.paper_type_id,
-    tl.accessory_id
+    tl.accessory_id,
+    COALESCE(b.name, at_name.name, '') as brand_name,
+    COALESCE(g.value, 0) as gsm_value,
+    COALESCE(p.width_inches, 0) as sheet_width,
+    COALESCE(p.height_inches, 0) as sheet_height
   FROM transfers t
   JOIN transfer_lines tl ON tl.transfer_id = t.id
   LEFT JOIN paper_types pt ON pt.id = tl.paper_type_id
@@ -80,6 +86,10 @@ interface TransferLineRow {
   waste_area_per_sheet: number
   paper_type_id: string | null
   accessory_id: string | null
+  brand_name: string
+  gsm_value: number
+  sheet_width: number
+  sheet_height: number
 }
 
 interface TransferGroup {
@@ -229,6 +239,32 @@ export function TransfersPage() {
                 <span className="text-xs text-muted-foreground">
                   {t.lines.length} item{t.lines.length !== 1 ? 's' : ''} · {formatNumber(totalSheets)} sheets · {formatNumber(totalPieces)} pieces
                 </span>
+                <Button variant="outline" size="sm" className="h-7 text-xs"
+                  onClick={() => {
+                    sessionStorage.setItem('transferReceiptData', JSON.stringify({
+                      transfer_number: t.transfer_number,
+                      transfer_date: t.transfer_date,
+                      notes: t.notes,
+                      lines: t.lines.map(l => ({
+                        product_label: l.product_label,
+                        category: l.category,
+                        brand_name: l.brand_name,
+                        gsm_value: l.gsm_value,
+                        sheet_width: l.sheet_width,
+                        sheet_height: l.sheet_height,
+                        cut_width_inches: l.cut_width_inches,
+                        cut_height_inches: l.cut_height_inches,
+                        quantity_units: l.quantity_units,
+                        unit_label: unitLabel(l.category as Category),
+                        quantity_sheets: l.quantity_sheets,
+                        pieces_per_sheet: l.pieces_per_sheet,
+                        total_cut_pieces: l.total_cut_pieces,
+                      })),
+                    }))
+                    navigate('/transfers/receipt')
+                  }}>
+                  <Printer className="h-3 w-3 mr-1" />Print
+                </Button>
                 <Button variant="outline" size="sm" className="h-7 text-xs"
                   onClick={() => navigate('/transfers/new', { state: { editTransferId: t.id } })}>
                   Edit

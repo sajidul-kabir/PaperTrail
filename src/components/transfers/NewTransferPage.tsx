@@ -43,6 +43,7 @@ interface TransferLine {
   quantity_units: string
   cut_size: string
   itemFilter: string
+  categoryFilter: string
 }
 
 // ─── SQL ──────────────────────────────────────────────────────────────────────
@@ -101,7 +102,11 @@ const ACCESSORY_COSTS_SQL = `
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const PRESET_CUT_SIZES = ['11.5x18', '10x15', '9x14', '9x11.5', '7.5x10', '9x7.5']
+const CUT_SIZE_PRESETS: Record<string, string[]> = {
+  PAPER: ['11.5x18', '10x15', '9x14', '9x11.5', '7.5x10', '9x7.5'],
+  CARD: ['9.25x11', '11x14', '7x11', '7.25x10.25', '11x17'],
+  STICKER: [],
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -110,7 +115,7 @@ function emptyLine(): TransferLine {
     id: uuid(),
     paper_type_id: '', accessory_id: '',
     quantity_units: '', cut_size: '',
-    itemFilter: '',
+    itemFilter: '', categoryFilter: '',
   }
 }
 
@@ -453,14 +458,21 @@ export function NewTransferPage() {
         const isAcc = !!line.accessory_id
         const cat: Category = selectedItem ? selectedItem.category as Category : isAcc ? 'ACCESSORY' : 'PAPER'
 
-        const filteredItems = line.itemFilter
+        const categoryTabs = ['', 'PAPER', 'CARD', 'STICKER', 'ACCESSORY'] as const
+        const catFiltered = line.categoryFilter
           ? allItems.filter(di => {
+              if (di.type === 'accessory') return line.categoryFilter === 'ACCESSORY'
+              return di.data.category === line.categoryFilter
+            })
+          : allItems
+        const filteredItems = line.itemFilter
+          ? catFiltered.filter(di => {
               if (di.type === 'item') {
                 return `${di.data.category} ${di.data.brand_name} ${di.data.gsm_value} ${formatSize(di.data.width_inches, di.data.height_inches)}`.toLowerCase().includes(line.itemFilter.toLowerCase())
               }
               return `accessory ${di.data.accessory_name}`.toLowerCase().includes(line.itemFilter.toLowerCase())
             })
-          : allItems
+          : catFiltered
 
         return (
           <Card key={line.id}>
@@ -492,10 +504,21 @@ export function NewTransferPage() {
                 }}>
                   <SelectTrigger className="h-9"><SelectValue placeholder="Select item..." /></SelectTrigger>
                   <SelectContent className="max-h-72" header={
-                    <Input placeholder="Search godown..." value={line.itemFilter}
-                      onChange={e => updateLine(line.id, { itemFilter: e.target.value })}
-                      onKeyDown={e => e.stopPropagation()}
-                      className="h-8 text-sm" />
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex gap-1">
+                        {categoryTabs.map(t => (
+                          <button key={t || 'ALL'} type="button"
+                            className={`px-2 py-0.5 text-[10px] font-semibold rounded ${line.categoryFilter === t ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
+                            onPointerDown={e => { e.preventDefault(); e.stopPropagation(); updateLine(line.id, { categoryFilter: t }) }}>
+                            {t || 'All'}
+                          </button>
+                        ))}
+                      </div>
+                      <Input placeholder="Search godown..." value={line.itemFilter}
+                        onChange={e => updateLine(line.id, { itemFilter: e.target.value })}
+                        onKeyDown={e => e.stopPropagation()}
+                        className="h-8 text-sm" />
+                    </div>
                   }>
                     {filteredItems.length === 0 ? (
                       <div className="py-3 text-center text-sm text-muted-foreground">No items found</div>
@@ -556,19 +579,26 @@ export function NewTransferPage() {
                   </div>
                   <div className="flex flex-col gap-1">
                     <Label className="text-xs">Cut Size</Label>
-                    <Select value={PRESET_CUT_SIZES.includes(line.cut_size) ? line.cut_size : '__custom'} onValueChange={v => {
-                      if (v !== '__custom') updateLine(line.id, { cut_size: v })
-                    }}>
-                      <SelectTrigger className="h-9">
-                        <SelectValue placeholder={line.cut_size || 'Select or type...'} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {PRESET_CUT_SIZES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                        <SelectItem value="__custom">Custom...</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {(!PRESET_CUT_SIZES.includes(line.cut_size) || line.cut_size === '') && (
-                      <Input className="h-8 mt-1 text-xs" type="text" placeholder="e.g. 20x30"
+                    {(CUT_SIZE_PRESETS[cat]?.length ?? 0) > 0 ? (
+                      <>
+                        <Select value={CUT_SIZE_PRESETS[cat]!.includes(line.cut_size) ? line.cut_size : '__custom'} onValueChange={v => {
+                          if (v !== '__custom') updateLine(line.id, { cut_size: v })
+                        }}>
+                          <SelectTrigger className="h-9">
+                            <SelectValue placeholder={line.cut_size || 'Select or type...'} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {CUT_SIZE_PRESETS[cat]!.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                            <SelectItem value="__custom">Custom...</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {(!CUT_SIZE_PRESETS[cat]!.includes(line.cut_size) || line.cut_size === '') && (
+                          <Input className="h-8 mt-1 text-xs" type="text" placeholder="e.g. 20x30"
+                            value={line.cut_size} onChange={e => updateLine(line.id, { cut_size: e.target.value })} />
+                        )}
+                      </>
+                    ) : (
+                      <Input className="h-9" type="text" placeholder="e.g. 20x30"
                         value={line.cut_size} onChange={e => updateLine(line.id, { cut_size: e.target.value })} />
                     )}
                   </div>

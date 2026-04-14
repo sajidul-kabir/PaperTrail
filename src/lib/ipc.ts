@@ -7,6 +7,12 @@ declare global {
     electronAPI: {
       dbExecute: (sql: string, params?: any[]) => Promise<{ success: boolean; data?: any; error?: string }>
       dbExecuteMany: (statements: { sql: string; params?: any[] }[]) => Promise<{ success: boolean; data?: any[]; error?: string }>
+      backupRun: () => Promise<{ success: boolean; data?: any; error?: string }>
+      backupInfo: () => Promise<{ success: boolean; data?: any; error?: string }>
+      backupSetCloudPath: (path: string | null) => Promise<{ success: boolean; error?: string }>
+      backupRestore: (fileName: string) => Promise<{ success: boolean; error?: string }>
+      backupPickFolder: () => Promise<{ success: boolean; data?: string | null; error?: string }>
+      backupRestoreFromFile: () => Promise<{ success: boolean; error?: string }>
     }
   }
 }

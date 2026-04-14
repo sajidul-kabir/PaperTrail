@@ -5,7 +5,7 @@ import { dbQuery, dbTransaction } from '@/lib/ipc'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
-import { formatBDT, formatDate, poishaToBdt, bdtToPoisha, formatSize } from '@/lib/utils'
+import { formatSize, bdtToPoisha } from '@/lib/utils'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -33,6 +33,16 @@ interface MemoData {
   order_ids: string[]
   lines: MemoLine[]
   outstanding_poisha: number
+}
+
+function formatDateBN(dateStr: string): string {
+  const d = new Date(dateStr)
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
+function formatTaka(poisha: number): string {
+  const bdt = poisha / 100
+  return bdt.toLocaleString('en-BD', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
 }
 
 async function generateBillNumber(): Promise<string> {
@@ -82,6 +92,7 @@ export function MemoPage() {
   const grandTotal = billTotal + outstanding
   const payingPoisha = payingNow ? bdtToPoisha(parseFloat(payingNow) || 0) : 0
   const remaining = grandTotal - payingPoisha
+  const emptyRows = Math.max(0, 8 - memo.lines.length)
 
   async function handleConfirm() {
     setSaving(true)
@@ -90,13 +101,11 @@ export function MemoPage() {
       const invoiceNumber = await generateBillNumber()
       const statements: { sql: string; params: any[] }[] = []
 
-      // Create invoice
       statements.push({
         sql: `INSERT INTO invoices (id, invoice_number, invoice_date, customer_id, subtotal_poisha, total_poisha, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', datetime('now'))`,
         params: [invoiceId, invoiceNumber, memo.bill_date, memo.customer_id, billTotal, billTotal],
       })
 
-      // Create invoice_lines
       for (const line of memo.lines) {
         statements.push({
           sql: `INSERT INTO invoice_lines (id, invoice_id, paper_type_id, accessory_id, cut_width_inches, cut_height_inches, quantity_sheets, selling_price_per_sheet_poisha, area_ratio, full_sheets_consumed, cost_per_full_sheet_poisha, cost_total_poisha, profit_poisha, profit_margin_pct, waste_sheets, line_total_poisha)
@@ -107,7 +116,6 @@ export function MemoPage() {
         })
       }
 
-      // Update orders to BILLED
       for (const orderId of memo.order_ids) {
         statements.push({
           sql: `UPDATE orders SET status = 'BILLED', invoice_id = ? WHERE id = ?`,
@@ -115,7 +123,6 @@ export function MemoPage() {
         })
       }
 
-      // Record payment if any
       if (payingPoisha > 0) {
         statements.push({
           sql: `INSERT INTO payments (id, customer_id, amount_poisha, payment_date, payment_method, notes, created_at) VALUES (?, ?, ?, ?, 'CASH', ?, datetime('now'))`,
@@ -126,7 +133,6 @@ export function MemoPage() {
       await dbTransaction(statements)
       sessionStorage.removeItem('memoData')
 
-      // Store print data
       sessionStorage.setItem('billPrintData', JSON.stringify({
         invoice_number: invoiceNumber,
         bill_date: memo.bill_date,
@@ -147,85 +153,114 @@ export function MemoPage() {
   }
 
   return (
-    <div className="flex flex-col gap-0 p-4 max-w-2xl mx-auto">
-      {/* Memo view — same layout as print */}
-      <div style={{ background: 'white', color: 'black', border: '1px solid #ddd', borderRadius: '8px', padding: '24px', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-        {/* Header */}
-        <div style={{ textAlign: 'center', borderBottom: '2px solid #333', paddingBottom: '10px', marginBottom: '14px' }}>
-          <div style={{ fontSize: '20px', fontWeight: 700 }}>MEMO</div>
+    <div className="flex flex-col gap-0 p-4 max-w-[5.5in] mx-auto">
+      <style>{`
+        .memo-preview { background: white; color: black; font-family: 'Noto Sans Bengali', 'Kalpurush', system-ui, sans-serif; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; }
+        .memo-preview * { color: black; }
+        .memo-preview .memo-hdr { background: linear-gradient(135deg, #0d7377, #14919b); color: white !important; padding: 12px 16px 10px; text-align: center; position: relative; }
+        .memo-preview .memo-hdr * { color: white !important; }
+        .memo-preview .memo-hdr h1 { font-size: 18px; font-weight: 700; margin: 0 0 2px; }
+        .memo-preview .memo-hdr .sub { font-size: 9.5px; margin: 0 0 2px; opacity: 0.9; }
+        .memo-preview .memo-hdr .addr { font-size: 9px; margin: 0 0 2px; opacity: 0.85; }
+        .memo-preview .memo-hdr .mob { font-size: 10.5px; font-weight: 600; margin: 0; }
+        .memo-preview .bno { position: absolute; top: 8px; left: 12px; font-size: 13px; font-weight: 700; color: #fcd34d !important; }
+        .memo-preview .mbadge { position: absolute; bottom: -1px; left: 12px; background: #dc2626; color: white !important; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 4px 4px 0 0; }
+        .memo-preview .memo-body { padding: 12px 16px 8px; }
+        .memo-preview table { width: 100%; border-collapse: collapse; font-size: 11px; }
+        .memo-preview th { border: 1px solid #444; padding: 3px 4px; font-weight: 700; text-align: center; background: #f5f5f0; }
+        .memo-preview td { border: 1px solid #888; padding: 2px 4px; font-variant-numeric: tabular-nums; }
+        .memo-preview td.r { text-align: right; }
+        .memo-preview td.c { text-align: center; }
+        .memo-preview .lbl { font-weight: 700; text-align: right; }
+        .memo-preview .amt { text-align: right; font-weight: 600; }
+      `}</style>
+
+      <div className="memo-preview">
+        <div className="memo-hdr">
+          <div className="bno">Preview</div>
+          <h1>নুকতা অফসেট প্রেস এন্ড পেপার হাউজ</h1>
+          <p className="sub">দেশী-বিদেশী কাগজ বিক্রয় ও প্রিন্টিং কাজের অর্ডার নেওয়া হয়।</p>
+          <p className="addr">হক সুপার মার্কেট, চিটাগারোড, সিদ্ধিরগঞ্জ, নারায়ণগঞ্জ।</p>
+          <p className="mob">মোবাইল ঃ ০১৮১৯-১৫৩৩৮০</p>
+          <div className="mbadge">ক্যাশ মেমো</div>
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '14px' }}>
-          <div>
-            <span style={{ color: '#666' }}>Customer: </span>
+        <div className="memo-body">
+          <div style={{ textAlign: 'right', fontSize: '11px', marginBottom: '6px' }}>তারিখ ঃ {formatDateBN(memo.bill_date)}</div>
+          <div style={{ fontSize: '11px', marginBottom: '8px', display: 'flex', alignItems: 'baseline' }}>
+            <span>প্রতিষ্ঠানের নাম ঃ</span>
+            <span style={{ flex: 1, borderBottom: '1px dotted #999', margin: '0 4px' }} />
             <span style={{ fontWeight: 600 }}>{customerDisplay}</span>
           </div>
-          <div>
-            <span style={{ color: '#666' }}>Date: </span>
-            <span style={{ fontWeight: 600 }}>{formatDate(memo.bill_date)}</span>
-          </div>
-        </div>
 
-        {/* Items table */}
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', marginBottom: '14px' }}>
-          <thead>
-            <tr style={{ borderBottom: '2px solid #333' }}>
-              <th style={{ textAlign: 'left', padding: '6px 8px 6px 0', fontWeight: 600 }}>Size</th>
-              <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 600 }}>Description</th>
-              <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 600 }}>Qty</th>
-              <th style={{ textAlign: 'right', padding: '6px 0 6px 8px', fontWeight: 600 }}>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {memo.lines.map((line, i) => {
-              const size = (line.cut_width_inches && line.cut_height_inches)
-                ? formatSize(line.cut_width_inches, line.cut_height_inches)
-                : '—'
-              return (
-                <tr key={i} style={{ borderBottom: '1px solid #ddd' }}>
-                  <td style={{ padding: '6px 8px 6px 0', fontVariantNumeric: 'tabular-nums' }}>{size}</td>
-                  <td style={{ padding: '6px 8px' }}>{line.label || 'Item'}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{line.quantity_pieces.toLocaleString()}</td>
-                  <td style={{ padding: '6px 0 6px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{formatBDT(line.line_total_poisha)}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+          <table style={{ marginBottom: '0' }}>
+            <thead>
+              <tr>
+                <th style={{ width: '18%' }}>সাইজ</th>
+                <th>বিবরণ</th>
+                <th style={{ width: '14%' }}>পরিমাণ</th>
+                <th style={{ width: '14%' }}>দর</th>
+                <th style={{ width: '16%' }}>টাকা</th>
+              </tr>
+            </thead>
+            <tbody>
+              {memo.lines.map((line, i) => {
+                const size = (line.cut_width_inches && line.cut_height_inches)
+                  ? formatSize(line.cut_width_inches, line.cut_height_inches) : '—'
+                return (
+                  <tr key={i}>
+                    <td className="c">{size}</td>
+                    <td>{line.label || 'Item'}</td>
+                    <td className="r">{line.quantity_pieces.toLocaleString()}</td>
+                    <td className="r">{formatTaka(line.selling_price_per_piece_poisha)}</td>
+                    <td className="r">{formatTaka(line.line_total_poisha)}</td>
+                  </tr>
+                )
+              })}
+              {Array.from({ length: emptyRows }).map((_, i) => (
+                <tr key={`e-${i}`}><td>&nbsp;</td><td></td><td></td><td></td><td></td></tr>
+              ))}
+            </tbody>
+          </table>
 
-        {/* Totals section */}
-        <div style={{ borderTop: '2px solid #333', paddingTop: '10px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '4px 0' }}>
-            <span>Bill Total</span>
-            <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{formatBDT(billTotal)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '4px 0', color: '#666' }}>
-            <span>Outstanding Balance</span>
-            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{outstanding > 0 ? formatBDT(outstanding) : '৳0.00'}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', padding: '8px 0 4px', fontWeight: 700, borderTop: '1px solid #999' }}>
-            <span>Grand Total</span>
-            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatBDT(grandTotal)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', padding: '8px 0 4px', borderTop: '1px solid #ddd' }}>
-            <span>Paying Now</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ color: '#666' }}>৳</span>
-              <Input className="h-8 w-32 text-right tabular-nums font-semibold" type="number" min="0" step="1"
-                style={{ color: 'black', background: 'white', border: '1px solid #ccc' }}
-                placeholder="0" value={payingNow} onChange={e => setPayingNow(e.target.value)} />
-            </div>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', padding: '8px 0 4px', fontWeight: 700, borderTop: '1px solid #999' }}>
-            <span>Remaining</span>
-            <span style={{ fontVariantNumeric: 'tabular-nums', color: remaining > 0 ? '#dc2626' : '#16a34a' }}>
-              {formatBDT(Math.max(0, remaining))}
-            </span>
-          </div>
+          <table style={{ marginBottom: '8px' }}>
+            <tbody>
+              <tr>
+                <td colSpan={3} rowSpan={5} style={{ border: '1px solid #888', verticalAlign: 'top' }}></td>
+                <td className="lbl" style={{ border: '1px solid #888' }}>মোট</td>
+                <td className="amt" style={{ border: '1px solid #888', width: '16%' }}>{formatTaka(billTotal)}</td>
+              </tr>
+              <tr>
+                <td className="lbl" style={{ border: '1px solid #888' }}>সাবেক</td>
+                <td className="amt" style={{ border: '1px solid #888' }}>{outstanding > 0 ? formatTaka(outstanding) : '—'}</td>
+              </tr>
+              <tr>
+                <td className="lbl" style={{ border: '1px solid #888' }}>সর্বমোট</td>
+                <td className="amt" style={{ border: '1px solid #888', fontWeight: 700 }}>{formatTaka(grandTotal)}</td>
+              </tr>
+              <tr>
+                <td className="lbl" style={{ border: '1px solid #888' }}>জমা</td>
+                <td className="amt" style={{ border: '1px solid #888' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '2px' }}>
+                    <span style={{ fontSize: '9px', opacity: 0.6 }}>৳</span>
+                    <Input className="h-6 w-20 text-right tabular-nums text-xs font-semibold p-1"
+                      style={{ color: 'black', background: '#fffff0', border: '1px solid #ccc' }}
+                      type="number" min="0" step="1" placeholder="0"
+                      value={payingNow} onChange={e => setPayingNow(e.target.value)} />
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td className="lbl" style={{ border: '1px solid #888' }}>বাকী</td>
+                <td className="amt" style={{ border: '1px solid #888', fontWeight: 700, color: remaining > 0 ? '#dc2626' : '#16a34a' }}>
+                  {formatTaka(Math.max(0, remaining))}
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
-      {/* Actions */}
       <div className="flex justify-between items-center pt-4">
         <Button variant="outline" onClick={() => navigate('/bills')} disabled={saving}>Cancel</Button>
         <Button onClick={handleConfirm} disabled={saving}>

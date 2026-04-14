@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { v4 as uuid } from 'uuid'
 import { useQuery } from '@/hooks/useQuery'
-import { dbTransaction } from '@/lib/ipc'
+import { dbQuery, dbTransaction } from '@/lib/ipc'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -27,6 +27,8 @@ interface InvoiceHeader {
   invoice_number: string
   invoice_date: string
   customer_name: string
+  customer_organization: string | null
+  customer_id: string
   total_poisha: number
   status: 'ACTIVE' | 'VOID'
   void_reason: string | null
@@ -61,6 +63,8 @@ const INVOICE_SQL = `
          i.invoice_number,
          i.invoice_date,
          c.name  AS customer_name,
+         c.organization AS customer_organization,
+         i.customer_id,
          i.total_poisha,
          i.status,
          i.void_reason,
@@ -252,7 +256,7 @@ export function InvoiceDetailPage() {
 
       await dbTransaction(statements)
 
-      addToast({ title: 'Order voided', description: `${invoice.invoice_number} has been voided.` })
+      addToast({ title: 'Bill voided', description: `${invoice.invoice_number} has been voided. Linked orders are now PENDING.` })
       setDialogOpen(false)
       setVoidReason('')
       refetchHeader()
@@ -262,6 +266,41 @@ export function InvoiceDetailPage() {
     } finally {
       setVoiding(false)
     }
+  }
+
+  const handlePrint = async () => {
+    if (!invoice) return
+    // Look up outstanding balance for this customer
+    let outstanding = 0
+    try {
+      const rows = await dbQuery<{ bal: number }>(`
+        SELECT COALESCE(SUM(i.total_poisha), 0) - COALESCE((SELECT SUM(p.amount_poisha) FROM payments p WHERE p.customer_id = ?), 0) as bal
+        FROM invoices i WHERE i.customer_id = ? AND i.status = 'ACTIVE'
+      `, [invoice.customer_id, invoice.customer_id])
+      outstanding = Math.max(0, (rows[0]?.bal ?? 0) - invoice.total_poisha)
+    } catch { /* ignore */ }
+
+    const customerDisplay = invoice.customer_organization || invoice.customer_name
+    sessionStorage.setItem('billPrintData', JSON.stringify({
+      invoice_number: invoice.invoice_number,
+      bill_date: invoice.invoice_date,
+      customer_display: customerDisplay,
+      customer_name: invoice.customer_name,
+      lines: lines.map(l => ({
+        cut_width_inches: l.cut_width_inches,
+        cut_height_inches: l.cut_height_inches,
+        quantity_pieces: l.quantity_sheets,
+        selling_price_per_piece_poisha: l.selling_price_per_sheet_poisha,
+        line_total_poisha: l.line_total_poisha,
+        label: l.paper_type_label,
+      })),
+      bill_total: grandTotal,
+      outstanding,
+      grand_total: grandTotal + outstanding,
+      paying_now: 0,
+      remaining: grandTotal + outstanding,
+    }))
+    navigate(`/bills/${invoice.id}/print`)
   }
 
   // ── Render states ───────────────────────────────────────────────────────────
@@ -305,22 +344,27 @@ export function InvoiceDetailPage() {
           )}
         </div>
 
-        {/* Void button — only for active invoices */}
-        {!isVoid && (
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button variant="destructive" size="sm">
-                Void Order
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Void Order {invoice.invoice_number}</DialogTitle>
-              </DialogHeader>
-              <div className="flex flex-col gap-3 pt-2">
-                <p className="text-sm text-muted-foreground">
-                  Voiding will reverse all stock movements for this order. This cannot be undone.
-                </p>
+        <div className="flex items-center gap-2">
+          {!isVoid && (
+            <Button variant="outline" size="sm" onClick={handlePrint}>
+              Print Again
+            </Button>
+          )}
+          {!isVoid && (
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="destructive" size="sm">
+                  Void Bill
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Void Bill {invoice.invoice_number}</DialogTitle>
+                </DialogHeader>
+                <div className="flex flex-col gap-3 pt-2">
+                  <p className="text-sm text-muted-foreground">
+                    Voiding will un-link all orders (setting them back to PENDING so they can be re-billed). This cannot be undone.
+                  </p>
                 <div className="flex flex-col gap-1.5">
                   <Label>Reason</Label>
                   <Input
@@ -345,17 +389,18 @@ export function InvoiceDetailPage() {
             </DialogContent>
           </Dialog>
         )}
+        </div>
       </div>
 
       {/* Invoice header card */}
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle>Order Details</CardTitle>
+          <CardTitle>Bill Details</CardTitle>
         </CardHeader>
         <CardContent>
           <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
             <div>
-              <dt className="text-xs text-muted-foreground uppercase tracking-wide">Order #</dt>
+              <dt className="text-xs text-muted-foreground uppercase tracking-wide">Bill #</dt>
               <dd className="font-mono font-medium mt-0.5">{invoice.invoice_number}</dd>
             </div>
             <div>

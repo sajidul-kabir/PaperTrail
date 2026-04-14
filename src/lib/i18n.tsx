@@ -16,6 +16,7 @@ const translations = {
   'nav.customers': { en: 'Customers', bn: 'গ্রাহক' },
   'nav.payments': { en: 'Payments', bn: 'পেমেন্ট' },
   'nav.reports': { en: 'Reports', bn: 'রিপোর্ট' },
+  'nav.settings': { en: 'Settings', bn: 'সেটিংস' },
 
   // Dashboard
   'dashboard.title': { en: 'Dashboard', bn: 'ড্যাশবোর্ড' },

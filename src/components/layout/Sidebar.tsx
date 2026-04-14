@@ -14,6 +14,7 @@ import {
   CreditCard,
   BarChart3,
   Layers,
+  Settings,
   Moon,
   Sun,
 } from 'lucide-react'
@@ -33,6 +34,7 @@ const navItems = [
   { to: '/customers', icon: Users, tKey: 'nav.customers' as const },
   { to: '/payments', icon: CreditCard, tKey: 'nav.payments' as const },
   { to: '/reports', icon: BarChart3, tKey: 'nav.reports' as const },
+  { to: '/settings', icon: Settings, tKey: 'nav.settings' as const },
 ]
 
 export function Sidebar() {

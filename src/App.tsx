@@ -7,6 +7,7 @@ import { PurchasesPage } from '@/components/purchases/PurchasesPage'
 import { GodownPage } from '@/components/inventory/GodownPage'
 import { TransfersPage } from '@/components/transfers/TransfersPage'
 import { NewTransferPage } from '@/components/transfers/NewTransferPage'
+import { TransferReceiptPage } from '@/components/transfers/TransferReceiptPage'
 import { CuttingInventoryPage } from '@/components/inventory/CuttingInventoryPage'
 import { OrdersPage } from '@/components/orders/OrdersPage'
 import { NewOrderPage } from '@/components/orders/NewOrderPage'
@@ -19,6 +20,7 @@ import { CustomersPage } from '@/components/customers/CustomersPage'
 import { CustomerDetailPage } from '@/components/customers/CustomerDetailPage'
 import { PaymentsPage } from '@/components/payments/PaymentsPage'
 import { ReportsPage } from '@/components/reports/ReportsPage'
+import { SettingsPage } from '@/components/settings/SettingsPage'
 
 export default function App() {
   return (
@@ -31,6 +33,7 @@ export default function App() {
         <Route path="/godown" element={<GodownPage />} />
         <Route path="/transfers" element={<TransfersPage />} />
         <Route path="/transfers/new" element={<NewTransferPage />} />
+        <Route path="/transfers/receipt" element={<TransferReceiptPage />} />
         <Route path="/cutting-stock" element={<CuttingInventoryPage />} />
         <Route path="/orders" element={<OrdersPage />} />
         <Route path="/orders/new" element={<NewOrderPage />} />
@@ -43,6 +46,7 @@ export default function App() {
         <Route path="/customers/:id" element={<CustomerDetailPage />} />
         <Route path="/payments" element={<PaymentsPage />} />
         <Route path="/reports" element={<ReportsPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
       </Route>
     </Routes>
   )
