@@ -5,12 +5,14 @@ import { useQuery } from '@/hooks/useQuery'
 import { dbTransaction } from '@/lib/ipc'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { DatePicker } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
 import { piecesPerSheet } from '@/lib/calculations'
+import { paperDisplayType } from '@/lib/paper-type'
 import { formatBDT, formatNumber, todayISO, bdtToPoisha, profitColor, formatSize, poishaToBdt } from '@/lib/utils'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -21,9 +23,10 @@ interface CuttingStockItem {
   paper_type_id: string | null; accessory_id: string | null
   cut_width_inches: number | null; cut_height_inches: number | null
   total_pieces: number; avg_cost_per_piece_poisha: number
-  label: string; category: string
+  label: string; category: string; variant: string
   brand_name: string; gsm_value: number
   sheet_width: number | null; sheet_height: number | null
+  avg_cost_per_sheet_poisha: number
 }
 
 interface LineItem {
@@ -42,15 +45,24 @@ const CUTTING_STOCK_SQL = `
       ELSE 0
     END as avg_cost_per_piece_poisha,
     COALESCE(
-      b.name || ' ' || g.value || 'gsm ' || MIN(p.width_inches, p.height_inches) || 'x' || MAX(p.width_inches, p.height_inches),
-      at.name || ' ' || ab.name || ' ' || ag.value || 'lb',
+      b.name || CASE WHEN pt.variant != '' THEN CASE WHEN pt.variant LIKE 'CB %' OR pt.variant LIKE 'CFB %' OR pt.variant LIKE 'CF %' THEN ' Carbon Paper' ELSE ' Color Paper' END ELSE '' END || ' ' || g.value || 'gsm ' || MIN(p.width_inches, p.height_inches) || 'x' || MAX(p.width_inches, p.height_inches) || CASE WHEN pt.variant != '' THEN ' ' || pt.variant ELSE '' END,
+      at.name || ' ' || ab.name || ' ' || ag.value || COALESCE(ag.unit, 'lb'),
       'Unknown'
     ) as label,
     COALESCE(pt.category, 'ACCESSORY') as category,
+    COALESCE(pt.variant, '') as variant,
     COALESCE(b.name, at.name, '') as brand_name,
     COALESCE(g.value, ag.value, 0) as gsm_value,
     p.width_inches as sheet_width,
-    p.height_inches as sheet_height
+    p.height_inches as sheet_height,
+    COALESCE(
+      (SELECT CASE WHEN SUM(pu.quantity_reams) > 0
+        THEN SUM(pu.cost_per_ream_poisha * pu.quantity_reams) / SUM(pu.quantity_reams)
+             / CASE WHEN pt.category IN ('CARD','STICKER') THEN 100 ELSE 500 END
+        ELSE 0
+      END FROM purchases pu WHERE pu.paper_type_id = cs.paper_type_id),
+      0
+    ) as avg_cost_per_sheet_poisha
   FROM cutting_stock cs
   LEFT JOIN paper_types pt ON pt.id = cs.paper_type_id
   LEFT JOIN brands b ON b.id = pt.brand_id
@@ -96,7 +108,9 @@ function shortLabel(item: CuttingStockItem): string {
   const full = fullSize ? cleanSize(parseFloat(fullSize[1]), parseFloat(fullSize[2])) : ''
   const cut = (item.cut_width_inches && item.cut_height_inches) ? cleanSize(item.cut_width_inches, item.cut_height_inches) : ''
   const gsm = item.gsm_value > 0 ? `${item.gsm_value}` : ''
-  return `${item.brand_name} ${gsm} ${full} ${cut}`.replace(/\s+/g, ' ').trim()
+  const subtype = item.variant ? ` ${paperDisplayType(item.variant)}` : ''
+  const variantSuffix = item.variant ? ` ${item.variant}` : ''
+  return `${item.brand_name}${subtype} ${gsm} ${full}${variantSuffix} ${cut}`.replace(/\s+/g, ' ').trim()
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -136,11 +150,12 @@ export function NewOrderPage() {
     const price = parseNum(line.selling_price)
     if (qty <= 0 || price <= 0) return null
     const pricePoisha = bdtToPoisha(price)
-    const pps = (item.category === 'CARD' || item.category === 'STICKER') && item.cut_width_inches && item.cut_height_inches && item.sheet_width && item.sheet_height
-      ? piecesPerSheet(Math.min(item.cut_width_inches, item.cut_height_inches), Math.max(item.cut_width_inches, item.cut_height_inches), item.sheet_width, item.sheet_height)
+    // For CARD/STICKER: derive actual pps from cost_per_sheet / cost_per_piece (matches transfer-time pps)
+    const actualPps = (item.category === 'CARD' || item.category === 'STICKER') && item.avg_cost_per_piece_poisha > 0 && item.avg_cost_per_sheet_poisha > 0
+      ? Math.round(item.avg_cost_per_sheet_poisha / item.avg_cost_per_piece_poisha)
       : 0
     const sellingPerPiece = item.category === 'PAPER' ? pricePoisha / 1000
-      : (item.category === 'CARD' || item.category === 'STICKER') && pps > 0 ? pricePoisha / pps
+      : (item.category === 'CARD' || item.category === 'STICKER') && actualPps > 0 ? pricePoisha / actualPps
       : pricePoisha
     const rawTotal = qty * sellingPerPiece
     const lineTotal = line.totalOverride ? bdtToPoisha(parseNum(line.totalOverride)) : Math.ceil(rawTotal / 100) * 100
@@ -203,7 +218,7 @@ export function NewOrderPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4 p-4">
+    <div className="flex flex-col gap-4 p-4 max-w-2xl mx-auto w-full">
       <h1 className="text-lg font-semibold">New Order</h1>
 
       <Card>
@@ -218,7 +233,7 @@ export function NewOrderPage() {
                   <SelectContent className="max-h-60" header={
                     <Input placeholder="Search customers..." value={customerFilter}
                       onChange={e => setCustomerFilter(e.target.value)}
-                      onKeyDown={e => e.stopPropagation()} className="h-8 text-sm" />
+                      className="h-8 text-sm" />
                   }>
                     {filteredCustomers.length === 0 ? <div className="py-3 text-center text-sm text-muted-foreground">No customers found</div>
                      : filteredCustomers.map(c => (
@@ -232,16 +247,13 @@ export function NewOrderPage() {
             </div>
             <div className="flex flex-col gap-1.5">
               <Label>Order Date</Label>
-              <Input type="date" value={orderDate} onChange={e => setOrderDate(e.target.value)} />
+              <DatePicker value={orderDate} onChange={setOrderDate} />
             </div>
           </div>
         </CardContent>
       </Card>
 
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold">Items (from Cutting Stock)</h2>
-        <Button variant="outline" size="sm" onClick={addLine}>Add Row</Button>
-      </div>
+      <h2 className="text-sm font-semibold">Items (from Cutting Stock)</h2>
 
       {lines.map((line, idx) => {
         const r = calcLine(line)
@@ -262,14 +274,19 @@ export function NewOrderPage() {
                 <span className="text-xs font-semibold text-muted-foreground">#{idx + 1}</span>
                 {selected && (
                   <div className="flex items-center gap-2">
-                    <Badge variant={cat === 'PAPER' ? 'secondary' : 'outline'} className={`text-[10px] px-1.5 py-0 ${categoryBadgeClass(cat)}`}>{cat}</Badge>
+                    {(() => {
+                      const displayType = cat === 'PAPER' ? paperDisplayType(selected.variant) : cat
+                      const isCarbon = displayType === 'Carbon Paper'
+                      const isColor = displayType === 'Color Paper'
+                      return <Badge variant={cat === 'PAPER' && !isCarbon && !isColor ? 'secondary' : 'outline'}
+                        className={`text-[10px] px-1.5 py-0 ${isCarbon ? 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200' : isColor ? 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200' : categoryBadgeClass(cat)}`}>{displayType}</Badge>
+                    })()}
                     <span className="text-sm font-medium text-primary">{dropdownLabel(selected)}</span>
                     <span className="text-xs text-muted-foreground">
-                      ({selected.avg_cost_per_piece_poisha > 0 ? (() => {
+                      ({selected.avg_cost_per_piece_poisha > 0 || selected.avg_cost_per_sheet_poisha > 0 ? (() => {
                         const costPc = formatBDT(Math.round(selected.avg_cost_per_piece_poisha))
-                        if ((cat === 'CARD' || cat === 'STICKER') && selected.cut_width_inches && selected.cut_height_inches && selected.sheet_width && selected.sheet_height) {
-                          const pps = piecesPerSheet(Math.min(selected.cut_width_inches, selected.cut_height_inches), Math.max(selected.cut_width_inches, selected.cut_height_inches), selected.sheet_width, selected.sheet_height)
-                          if (pps > 0) return `${formatBDT(Math.round(selected.avg_cost_per_piece_poisha * pps))}/sheet, ${costPc}/pc`
+                        if (selected.avg_cost_per_sheet_poisha > 0) {
+                          return `${formatBDT(Math.round(selected.avg_cost_per_sheet_poisha))}/sheet, ${costPc}/pc`
                         }
                         return `${costPc}/pc`
                       })() : 'no cost'})
@@ -294,7 +311,7 @@ export function NewOrderPage() {
                           </button>
                         ))}
                       </div>
-                      <Input placeholder="Search..." value={line.itemFilter} onChange={e => updateLine(line.id, { itemFilter: e.target.value })} onKeyDown={e => e.stopPropagation()} className="h-8 text-sm" />
+                      <Input placeholder="Search..." value={line.itemFilter} onChange={e => updateLine(line.id, { itemFilter: e.target.value })} className="h-8 text-sm" />
                     </div>
                   }>
                     {filteredItems.length === 0 ? <div className="py-3 text-center text-sm text-muted-foreground">No items</div>
@@ -355,6 +372,8 @@ export function NewOrderPage() {
           </Card>
         )
       })}
+
+      <Button variant="outline" size="sm" onClick={addLine} className="w-full">+ Add Row</Button>
 
       {/* Summary */}
       <Card>

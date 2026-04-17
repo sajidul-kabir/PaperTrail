@@ -56,7 +56,7 @@
   body {
     @apply bg-background text-foreground;
     font-family: "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif;
-    font-size: 18px;
+    font-size: 30px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
   }

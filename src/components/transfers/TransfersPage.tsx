@@ -11,7 +11,7 @@ import { Calendar } from '@/components/ui/calendar'
 import * as Popover from '@radix-ui/react-popover'
 import { useToast } from '@/components/ui/toast'
 import { formatDate, formatNumber, formatSize, todayISO } from '@/lib/utils'
-import { unitLabel } from '@/lib/paper-type'
+import { unitLabel, paperDisplayType } from '@/lib/paper-type'
 import type { Category } from '@/lib/paper-type'
 import { ChevronLeft, ChevronRight, CalendarDays, Printer } from 'lucide-react'
 
@@ -34,8 +34,8 @@ const TRANSFERS_SQL = `
     t.id, t.transfer_number, t.transfer_date, t.notes, t.created_at,
     tl.id as line_id,
     COALESCE(
-      b.name || ' ' || g.value || 'gsm ' || MIN(p.width_inches, p.height_inches) || 'x' || MAX(p.width_inches, p.height_inches),
-      at_name.name || ' ' || ab.name || ' ' || ag.value || 'lb',
+      b.name || CASE WHEN pt.variant != '' THEN CASE WHEN pt.variant LIKE 'CB %' OR pt.variant LIKE 'CFB %' OR pt.variant LIKE 'CF %' THEN ' Carbon Paper' ELSE ' Color Paper' END ELSE '' END || ' ' || g.value || 'gsm ' || MIN(p.width_inches, p.height_inches) || 'x' || MAX(p.width_inches, p.height_inches) || CASE WHEN pt.variant != '' THEN ' ' || pt.variant ELSE '' END,
+      at_name.name || ' ' || ab.name || ' ' || ag.value || COALESCE(ag.unit, 'lb'),
       'Unknown'
     ) as product_label,
     COALESCE(pt.category, 'ACCESSORY') as category,
@@ -51,7 +51,8 @@ const TRANSFERS_SQL = `
     COALESCE(b.name, at_name.name, '') as brand_name,
     COALESCE(g.value, 0) as gsm_value,
     COALESCE(p.width_inches, 0) as sheet_width,
-    COALESCE(p.height_inches, 0) as sheet_height
+    COALESCE(p.height_inches, 0) as sheet_height,
+    COALESCE(pt.variant, '') as variant
   FROM transfers t
   JOIN transfer_lines tl ON tl.transfer_id = t.id
   LEFT JOIN paper_types pt ON pt.id = tl.paper_type_id
@@ -90,6 +91,7 @@ interface TransferLineRow {
   gsm_value: number
   sheet_width: number
   sheet_height: number
+  variant: string
 }
 
 interface TransferGroup {
@@ -197,7 +199,7 @@ export function TransfersPage() {
         <Popover.Root open={calendarOpen} onOpenChange={setCalendarOpen}>
           <Popover.Trigger asChild>
             <Button variant="outline" className="h-8 gap-2 px-3 text-sm font-medium">
-              <CalendarDays className="h-4 w-4" />{formatDate(selectedDate)}
+              {formatDate(selectedDate)}<CalendarDays className="h-5 w-5 shrink-0 opacity-60" />
             </Button>
           </Popover.Trigger>
           <Popover.Portal>
@@ -297,8 +299,13 @@ export function TransfersPage() {
                     <TableRow key={line.line_id}>
                       <TableCell className="font-medium text-sm">{line.product_label}</TableCell>
                       <TableCell>
-                        <Badge variant={line.category === 'PAPER' ? 'secondary' : 'outline'}
-                          className={`text-[10px] px-1.5 py-0 ${categoryBadgeClass(line.category)}`}>{line.category}</Badge>
+                        {(() => {
+                          const displayType = line.category === 'PAPER' ? paperDisplayType(line.variant) : line.category
+                          const isCarbon = displayType === 'Carbon Paper'
+                          const isColor = displayType === 'Color Paper'
+                          return <Badge variant={line.category === 'PAPER' && !isCarbon && !isColor ? 'secondary' : 'outline'}
+                            className={`text-[10px] px-1.5 py-0 ${isCarbon ? 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200' : isColor ? 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200' : categoryBadgeClass(line.category)}`}>{displayType}</Badge>
+                        })()}
                       </TableCell>
                       <TableCell className="tabular-nums">
                         {isAcc ? '—' : (line.cut_width_inches && line.cut_height_inches

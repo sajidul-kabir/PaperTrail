@@ -107,7 +107,7 @@ interface ProfitByPaperRow {
 
 const PROFIT_BY_PAPER_SQL = `
 SELECT
-  b.name || ' ' || g.value || 'gsm ' || MIN(p.width_inches, p.height_inches) || 'x' || MAX(p.width_inches, p.height_inches) as paper_type_label,
+  b.name || CASE WHEN pt.variant != '' THEN CASE WHEN pt.variant LIKE 'CB %' OR pt.variant LIKE 'CFB %' OR pt.variant LIKE 'CF %' THEN ' Carbon Paper' ELSE ' Color Paper' END ELSE '' END || ' ' || g.value || 'gsm ' || MIN(p.width_inches, p.height_inches) || 'x' || MAX(p.width_inches, p.height_inches) || CASE WHEN pt.variant != '' THEN ' ' || pt.variant ELSE '' END as paper_type_label,
   SUM(il.line_total_poisha) as revenue,
   SUM(il.cost_total_poisha) as cost,
   SUM(il.profit_poisha) as profit,

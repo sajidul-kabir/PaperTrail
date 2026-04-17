@@ -4,10 +4,11 @@ import { v4 as uuid } from 'uuid'
 import { useQuery } from '@/hooks/useQuery'
 import { dbQuery, dbTransaction } from '@/lib/ipc'
 import { piecesPerSheet, wasteAreaPerSheet } from '@/lib/calculations'
-import { sheetsPerUnit, unitLabelPlural } from '@/lib/paper-type'
+import { paperDisplayType } from '@/lib/paper-type'
 import type { Category } from '@/lib/paper-type'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { DatePicker } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -24,6 +25,7 @@ interface GodownItem {
   gsm_value: number
   width_inches: number
   height_inches: number
+  variant: string
   total_sheets: number
 }
 
@@ -42,6 +44,7 @@ interface TransferLine {
   accessory_id: string
   quantity_units: string
   cut_size: string
+  ppsOverride: string
   itemFilter: string
   categoryFilter: string
 }
@@ -52,6 +55,7 @@ const GODOWN_SQL = `
   SELECT pt.id as paper_type_id, pt.category,
     b.name as brand_name, g.value as gsm_value,
     p.width_inches, p.height_inches,
+    COALESCE(pt.variant, '') as variant,
     COALESCE(SUM(sl.quantity_sheets), 0) as total_sheets
   FROM paper_types pt
   JOIN brands b ON pt.brand_id = b.id
@@ -65,7 +69,7 @@ const GODOWN_SQL = `
 
 const ACCESSORY_GODOWN_SQL = `
   SELECT a.id as accessory_id,
-    at.name || ' ' || b.name || ' ' || g.value || 'lb' as accessory_name,
+    at.name || ' ' || b.name || ' ' || g.value || COALESCE(g.unit, 'lb') as accessory_name,
     COALESCE(SUM(sl.quantity_sheets), 0) as total_pieces
   FROM accessories a
   JOIN accessory_types at ON a.accessory_type_id = at.id
@@ -114,7 +118,7 @@ function emptyLine(): TransferLine {
   return {
     id: uuid(),
     paper_type_id: '', accessory_id: '',
-    quantity_units: '', cut_size: '',
+    quantity_units: '', cut_size: '', ppsOverride: '',
     itemFilter: '', categoryFilter: '',
   }
 }
@@ -133,7 +137,7 @@ function parseCutSize(s: string): [number, number] | null {
 }
 
 function itemLabel(item: GodownItem): string {
-  return paperTypeLabel(item.brand_name, item.gsm_value, item.width_inches, item.height_inches)
+  return paperTypeLabel(item.brand_name, item.gsm_value, item.width_inches, item.height_inches, item.variant)
 }
 
 function categoryBadgeClass(cat: Category): string {
@@ -194,9 +198,9 @@ export function NewTransferPage() {
 
         const tLines = await dbQuery<{
           paper_type_id: string | null; accessory_id: string | null
-          quantity_units: number; cut_width_inches: number | null; cut_height_inches: number | null
+          quantity_sheets: number; cut_width_inches: number | null; cut_height_inches: number | null
         }>(
-          `SELECT paper_type_id, accessory_id, quantity_units, cut_width_inches, cut_height_inches FROM transfer_lines WHERE transfer_id = ?`,
+          `SELECT paper_type_id, accessory_id, quantity_sheets, cut_width_inches, cut_height_inches FROM transfer_lines WHERE transfer_id = ?`,
           [editTransferId]
         )
         if (tLines.length > 0) {
@@ -204,7 +208,7 @@ export function NewTransferPage() {
             id: uuid(),
             paper_type_id: tl.paper_type_id ?? '',
             accessory_id: tl.accessory_id ?? '',
-            quantity_units: String(tl.quantity_units),
+            quantity_units: String(tl.quantity_sheets),
             cut_size: (tl.cut_width_inches && tl.cut_height_inches)
               ? `${Math.min(tl.cut_width_inches, tl.cut_height_inches)}x${Math.max(tl.cut_width_inches, tl.cut_height_inches)}`
               : '',
@@ -266,15 +270,15 @@ export function NewTransferPage() {
     }
 
     if (!item) return null
-    const cat = item.category as Category
-    const spu = sheetsPerUnit(cat)
-    const totalSheets = Math.round(qtyUnits * spu)
+    const totalSheets = Math.round(qtyUnits)
 
     const parsed = parseCutSize(line.cut_size)
     if (!parsed) return null
     const [cutW, cutH] = parsed
 
-    const pps = piecesPerSheet(cutW, cutH, item.width_inches, item.height_inches)
+    const calcPps = piecesPerSheet(cutW, cutH, item.width_inches, item.height_inches)
+    const overridePps = parseNum(line.ppsOverride)
+    const pps = overridePps > 0 ? overridePps : calcPps
     if (pps <= 0) return null
 
     const totalPieces = totalSheets * pps
@@ -297,7 +301,8 @@ export function NewTransferPage() {
 
   const lineResults = lines.map(l => ({ line: l, result: calcTransferLine(l) }))
   const validLines = lineResults.filter(lr => lr.result !== null)
-  const canSave = transferDate !== '' && validLines.length > 0
+  const hasExceeding = validLines.some(({ result }) => result !== null && result.quantitySheets > result.availableSheets)
+  const canSave = transferDate !== '' && validLines.length > 0 && !hasExceeding
 
   async function handleSave() {
     if (!canSave) return
@@ -427,7 +432,7 @@ export function NewTransferPage() {
   ]
 
   return (
-    <div className="flex flex-col gap-4 p-4">
+    <div className="flex flex-col gap-4 p-4 max-w-2xl mx-auto w-full">
       <h1 className="text-lg font-semibold">{editTransferId ? 'Edit Transfer' : 'New Transfer'} (Godown → Cutting)</h1>
 
       <Card>
@@ -436,7 +441,7 @@ export function NewTransferPage() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <Label>Transfer Date</Label>
-              <Input type="date" value={transferDate} onChange={e => setTransferDate(e.target.value)} />
+              <DatePicker value={transferDate} onChange={setTransferDate} />
             </div>
             <div className="flex flex-col gap-1.5">
               <Label>Notes (optional)</Label>
@@ -446,10 +451,7 @@ export function NewTransferPage() {
         </CardContent>
       </Card>
 
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold">Transfer Lines</h2>
-        <Button variant="outline" size="sm" onClick={addLine}>Add Row</Button>
-      </div>
+      <h2 className="text-sm font-semibold">Transfer Lines</h2>
 
       {lines.map((line, idx) => {
         const r = calcTransferLine(line)
@@ -468,7 +470,7 @@ export function NewTransferPage() {
         const filteredItems = line.itemFilter
           ? catFiltered.filter(di => {
               if (di.type === 'item') {
-                return `${di.data.category} ${di.data.brand_name} ${di.data.gsm_value} ${formatSize(di.data.width_inches, di.data.height_inches)}`.toLowerCase().includes(line.itemFilter.toLowerCase())
+                return `${di.data.category} ${itemLabel(di.data)}`.toLowerCase().includes(line.itemFilter.toLowerCase())
               }
               return `accessory ${di.data.accessory_name}`.toLowerCase().includes(line.itemFilter.toLowerCase())
             })
@@ -481,11 +483,31 @@ export function NewTransferPage() {
                 <span className="text-xs font-semibold text-muted-foreground">#{idx + 1}</span>
                 {(selectedItem || selectedAcc) && (
                   <div className="flex items-center gap-2">
-                    <Badge variant={cat === 'PAPER' ? 'secondary' : 'outline'}
-                      className={`text-[10px] px-1.5 py-0 ${categoryBadgeClass(cat)}`}>{cat}</Badge>
+                    {(() => {
+                      const displayType = cat === 'PAPER' && selectedItem ? paperDisplayType(selectedItem.variant) : cat
+                      const isCarbon = displayType === 'Carbon Paper'
+                      const isColor = displayType === 'Color Paper'
+                      return <Badge variant={cat === 'PAPER' && !isCarbon && !isColor ? 'secondary' : 'outline'}
+                        className={`text-[10px] px-1.5 py-0 ${isCarbon ? 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200' : isColor ? 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200' : categoryBadgeClass(cat)}`}>{displayType}</Badge>
+                    })()}
                     <span className="text-sm font-medium text-primary">
                       {isAcc ? selectedAcc?.accessory_name : (selectedItem ? itemLabel(selectedItem) : '')}
                     </span>
+                    {!isAcc && selectedItem && (() => {
+                      const cps = costMap.get(line.paper_type_id) ?? 0
+                      if (cps <= 0) return <span className="text-xs text-muted-foreground">(no cost)</span>
+                      const cpp = r && r.pps > 0 ? cps / r.pps : 0
+                      return (
+                        <span className="text-xs text-muted-foreground">
+                          (৳{(cps / 100).toFixed(2)}/sheet{cpp > 0 ? `, ৳${(cpp / 100).toFixed(2)}/pc` : ''})
+                        </span>
+                      )
+                    })()}
+                    {isAcc && selectedAcc && (() => {
+                      const cpp = accCostMap.get(line.accessory_id) ?? 0
+                      if (cpp <= 0) return <span className="text-xs text-muted-foreground">(no cost)</span>
+                      return <span className="text-xs text-muted-foreground">(৳{(cpp / 100).toFixed(2)}/pc)</span>
+                    })()}
                   </div>
                 )}
                 <button type="button" className="text-muted-foreground hover:text-destructive transition-colors text-lg leading-none"
@@ -516,7 +538,6 @@ export function NewTransferPage() {
                       </div>
                       <Input placeholder="Search godown..." value={line.itemFilter}
                         onChange={e => updateLine(line.id, { itemFilter: e.target.value })}
-                        onKeyDown={e => e.stopPropagation()}
                         className="h-8 text-sm" />
                     </div>
                   }>
@@ -535,8 +556,6 @@ export function NewTransferPage() {
                         )
                       }
                       const i = di.data
-                      const spu = sheetsPerUnit(i.category as Category)
-                      const units = i.total_sheets / spu
                       return (
                         <SelectItem key={i.paper_type_id} value={i.paper_type_id}>
                           <div className="flex items-center gap-2">
@@ -545,7 +564,7 @@ export function NewTransferPage() {
                             </span>
                             <span>{itemLabel(i)}</span>
                             <span className="text-muted-foreground text-xs ml-auto">
-                              {formatNumber(units, 1)} {unitLabelPlural(i.category as Category)}
+                              {formatNumber(i.total_sheets)} sheets/pcs
                             </span>
                           </div>
                         </SelectItem>
@@ -573,8 +592,8 @@ export function NewTransferPage() {
               ) : (
                 <div className="grid grid-cols-3 gap-3 mb-3">
                   <div className="flex flex-col gap-1">
-                    <Label className="text-xs">Qty ({selectedItem ? unitLabelPlural(cat) : 'units'})</Label>
-                    <Input className="h-9" type="number" min="0" step="0.5" placeholder="3"
+                    <Label className="text-xs">Qty (sheets/pieces)</Label>
+                    <Input className="h-9" type="number" min="0" step="1" placeholder="2500"
                       value={line.quantity_units} onChange={e => updateLine(line.id, { quantity_units: e.target.value })} />
                   </div>
                   <div className="flex flex-col gap-1">
@@ -582,7 +601,7 @@ export function NewTransferPage() {
                     {(CUT_SIZE_PRESETS[cat]?.length ?? 0) > 0 ? (
                       <>
                         <Select value={CUT_SIZE_PRESETS[cat]!.includes(line.cut_size) ? line.cut_size : '__custom'} onValueChange={v => {
-                          if (v !== '__custom') updateLine(line.id, { cut_size: v })
+                          updateLine(line.id, { cut_size: v === '__custom' ? '' : v })
                         }}>
                           <SelectTrigger className="h-9">
                             <SelectValue placeholder={line.cut_size || 'Select or type...'} />
@@ -605,7 +624,7 @@ export function NewTransferPage() {
                   <div className="flex flex-col gap-1">
                     <Label className="text-xs">Available</Label>
                     <div className="h-9 flex items-center text-sm text-muted-foreground">
-                      {selectedItem ? `${formatNumber(selectedItem.total_sheets / sheetsPerUnit(cat), 1)} ${unitLabelPlural(cat)}` : '—'}
+                      {selectedItem ? `${formatNumber(selectedItem.total_sheets)} sheets/pcs` : '—'}
                     </div>
                   </div>
                 </div>
@@ -622,7 +641,10 @@ export function NewTransferPage() {
                       </div>
                       <div className="text-center">
                         <div className="text-[10px] text-muted-foreground uppercase">Pieces/Sheet</div>
-                        <div className="tabular-nums font-medium">{r.pps}</div>
+                        <Input className="h-7 w-14 text-center tabular-nums font-medium text-sm p-0 mx-auto"
+                          type="number" min="1" step="1"
+                          value={line.ppsOverride || String(r.pps)}
+                          onChange={e => updateLine(line.id, { ppsOverride: e.target.value })} />
                       </div>
                     </>
                   )}
@@ -647,6 +669,8 @@ export function NewTransferPage() {
           </Card>
         )
       })}
+
+      <Button variant="outline" size="sm" onClick={addLine} className="w-full">+ Add Row</Button>
 
       {/* Summary */}
       {validLines.length > 0 && (

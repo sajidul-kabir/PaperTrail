@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatBDT, formatNumber, paperTypeLabel, formatSize } from '@/lib/utils'
 import { cn } from '@/lib/utils'
-import { sheetsPerUnit, unitLabelPlural } from '@/lib/paper-type'
+import { sheetsPerUnit, unitLabelPlural, paperDisplayType } from '@/lib/paper-type'
 import type { Category } from '@/lib/paper-type'
 
 const LOW_STOCK_THRESHOLD = 5
@@ -19,6 +19,7 @@ SELECT
   b.name as brand_name,
   g.value as gsm_value,
   p.width_inches, p.height_inches,
+  COALESCE(pt.variant, '') as variant,
   COALESCE(SUM(sl.quantity_sheets), 0) as total_sheets
 FROM paper_types pt
 JOIN brands b ON pt.brand_id = b.id
@@ -26,6 +27,7 @@ JOIN gsm_options g ON pt.gsm_id = g.id
 JOIN proportions p ON pt.proportion_id = p.id
 LEFT JOIN stock_ledger sl ON sl.paper_type_id = pt.id
 GROUP BY pt.id
+HAVING total_sheets > 0
 ORDER BY pt.category, b.name, g.value
 `
 
@@ -43,7 +45,7 @@ GROUP BY paper_type_id
 const ACCESSORY_STOCK_SQL = `
 SELECT
   a.id as accessory_id,
-  at.name || ' ' || b.name || ' ' || g.value || 'lb' as accessory_name,
+  at.name || ' ' || b.name || ' ' || g.value || COALESCE(g.unit, 'lb') as accessory_name,
   COALESCE(SUM(sl.quantity_sheets), 0) as total_pieces
 FROM accessories a
 JOIN accessory_types at ON a.accessory_type_id = at.id
@@ -51,6 +53,7 @@ JOIN brands b ON a.brand_id = b.id
 JOIN gsm_options g ON a.gsm_id = g.id
 LEFT JOIN stock_ledger sl ON sl.accessory_id = a.id
 GROUP BY a.id
+HAVING total_pieces > 0
 ORDER BY at.name, b.name
 `
 
@@ -73,6 +76,7 @@ interface StockRow {
   gsm_value: number
   width_inches: number
   height_inches: number
+  variant: string
   total_sheets: number
 }
 
@@ -132,7 +136,7 @@ export function GodownPage() {
 
   const filteredRows = stockRows
     .filter(row => viewCategory === 'ALL' || row.category === viewCategory)
-    .filter(row => `${row.brand_name} ${row.gsm_value} ${formatSize(row.width_inches, row.height_inches)}`.toLowerCase().includes(filter.toLowerCase()))
+    .filter(row => `${row.brand_name} ${row.gsm_value} ${formatSize(row.width_inches, row.height_inches)} ${row.variant}`.toLowerCase().includes(filter.toLowerCase()))
 
   const filteredAccessoryRows = accessoryStockRows
     .filter(() => viewCategory === 'ALL' || viewCategory === 'ACCESSORY')
@@ -241,7 +245,7 @@ export function GodownPage() {
                 <TabsTrigger value="ACCESSORY">Accessory</TabsTrigger>
               </TabsList>
             </Tabs>
-            <Input placeholder="Search inventory..." value={filter} onChange={e => setFilter(e.target.value)} className="max-w-sm" />
+            <Input placeholder="Search inventory..." value={filter} onChange={e => setFilter(e.target.value)} onFocus={() => setViewCategory('ALL')} className="max-w-sm" />
           </div>
 
           <Table>
@@ -275,10 +279,15 @@ export function GodownPage() {
                 return (
                   <TableRow key={row.paper_type_id} className={cn(isLow && 'bg-destructive/10 hover:bg-destructive/15')}>
                     <TableCell className="font-medium">
-                      {paperTypeLabel(row.brand_name, row.gsm_value, row.width_inches, row.height_inches)}
+                      {paperTypeLabel(row.brand_name, row.gsm_value, row.width_inches, row.height_inches, row.variant)}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={cat === 'PAPER' ? 'secondary' : 'outline'} className={`text-[10px] px-1.5 py-0 ${cat === 'CARD' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' : cat === 'STICKER' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' : ''}`}>{cat}</Badge>
+                      {(() => {
+                        const displayType = cat === 'PAPER' ? paperDisplayType(row.variant) : cat
+                        const isCarbon = displayType === 'Carbon Paper'
+                        const isColor = displayType === 'Color Paper'
+                        return <Badge variant={cat === 'PAPER' && !isCarbon && !isColor ? 'secondary' : 'outline'} className={`text-[10px] px-1.5 py-0 ${cat === 'CARD' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' : cat === 'STICKER' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' : isCarbon ? 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200' : isColor ? 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200' : ''}`}>{displayType}</Badge>
+                      })()}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {formatNumber(units, 1)} {unitLabelPlural(cat)}

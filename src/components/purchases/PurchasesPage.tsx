@@ -1,16 +1,17 @@
 import { useState, useCallback } from 'react'
-import { dbTransaction } from '@/lib/ipc'
-import { findOrCreatePaperType, findOrCreateAccessory, sheetsPerUnit, unitLabel, unitLabelPlural } from '@/lib/paper-type'
+import { dbQuery, dbTransaction } from '@/lib/ipc'
+import { findOrCreatePaperType, findOrCreateAccessory, sheetsPerUnit, unitLabel, unitLabelPlural, PAPER_SUBTYPES, VARIANT_PRESETS, paperDisplayType } from '@/lib/paper-type'
 import type { Category } from '@/lib/paper-type'
 import { useQuery } from '@/hooks/useQuery'
 import { v4 as uuid } from 'uuid'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { DatePicker } from '@/components/ui/date-picker'
 import { Label } from '@/components/ui/label'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from '@/components/ui/dialog'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
@@ -41,8 +42,8 @@ const PURCHASES_SQL = `
     pu.quantity_reams, pu.cost_per_ream_poisha,
     pu.supplier_name, pu.notes,
     pu.paper_type_id, pu.accessory_id,
-    pt.brand_id, pt.gsm_id, pt.proportion_id,
-    ac.brand_id as acc_brand_id, ac.gsm_id as acc_gsm_id, ac.accessory_type_id as acc_type_id,
+    pt.brand_id, pt.gsm_id, pt.proportion_id, COALESCE(pt.variant, '') as variant,
+    ac.brand_id as acc_brand_id, ac.gsm_id as acc_gsm_id, ac.accessory_type_id as acc_type_id, COALESCE(ag.unit, 'lb') as acc_gsm_unit,
     pu.supplier_id,
     COALESCE(s.name, pu.supplier_name) as display_supplier_name
   FROM purchases pu
@@ -62,7 +63,7 @@ const PURCHASES_SQL = `
 
 interface SummaryRow { total_all: number; total_today: number; total_week: number; total_month: number; total_paper: number; total_card: number; total_sticker: number; total_accessory: number }
 interface Brand { id: string; name: string }
-interface Gsm { id: string; value: number }
+interface Gsm { id: string; value: number; unit: string }
 interface Proportion { id: string; width_inches: number; height_inches: number }
 interface AccessoryType { id: string; name: string }
 interface SupplierOption { id: string; name: string }
@@ -72,9 +73,9 @@ interface Purchase {
   brand_name: string; gsm_value: number; width_inches: number; height_inches: number
   accessory_name: string; quantity_reams: number; cost_per_ream_poisha: number
   supplier_name: string | null; notes: string | null
-  paper_type_id: string | null; accessory_id: string | null
+  paper_type_id: string | null; accessory_id: string | null; variant: string
   brand_id: string | null; gsm_id: string | null; proportion_id: string | null
-  acc_brand_id: string | null; acc_gsm_id: string | null; acc_type_id: string | null
+  acc_brand_id: string | null; acc_gsm_id: string | null; acc_type_id: string | null; acc_gsm_unit: string
   supplier_id: string | null; display_supplier_name: string | null
 }
 
@@ -102,11 +103,18 @@ interface PurchaseLine {
   id: string
   category: Category
   brandId: string; gsmId: string; proportionId: string; accessoryId: string
+  paperSubtype: string; variant: string; variantFilter: string; variantTab: string
   quantity: string; costPerUnit: string
 }
 
 function emptyLine(): PurchaseLine {
-  return { id: uuid(), category: 'PAPER', brandId: '', gsmId: '', proportionId: '', accessoryId: '', quantity: '', costPerUnit: '' }
+  return { id: uuid(), category: 'PAPER', brandId: '', gsmId: '', proportionId: '', accessoryId: '', paperSubtype: '', variant: '', variantFilter: '', variantTab: '', quantity: '', costPerUnit: '' }
+}
+
+/** Tab groups for variant filtering */
+const VARIANT_TABS: Record<string, string[]> = {
+  carbon: ['', 'CB', 'CFB', 'CF'],
+  color: [],
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -118,7 +126,9 @@ export function PurchasesPage() {
   const [saving, setSaving] = useState(false)
   const [filter, setFilter] = useState('')
   const [viewCategory, setViewCategory] = useState<'ALL' | Category>('ALL')
-  const [summaryView, setSummaryView] = useState<'today' | 'week' | 'month' | 'all' | 'paper' | 'card' | 'sticker' | 'accessory'>('today')
+  const [summaryView, setSummaryView] = useState<'today' | 'week' | 'month' | 'all' | 'paper' | 'card' | 'sticker' | 'accessory'>('month')
+  const [deleteTarget, setDeleteTarget] = useState<Purchase | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   // Multi-line form state
   const [purchaseDate, setPurchaseDate] = useState(todayISO())
@@ -130,7 +140,7 @@ export function PurchasesPage() {
   const activeCat = lines[0]?.category ?? 'PAPER'
 
   const { data: brands } = useQuery<Brand>(`SELECT id, name FROM brands WHERE category = ? ORDER BY name`, [activeCat], [activeCat])
-  const { data: gsmOptions } = useQuery<Gsm>(`SELECT id, value FROM gsm_options WHERE category = ? ORDER BY value`, [activeCat], [activeCat])
+  const { data: gsmOptions } = useQuery<Gsm>(`SELECT id, value, COALESCE(unit, '') as unit FROM gsm_options WHERE category = ? ORDER BY value`, [activeCat], [activeCat])
   const { data: proportions } = useQuery<Proportion>(`SELECT id, width_inches, height_inches FROM proportions WHERE category = ? ORDER BY width_inches`, [activeCat], [activeCat])
   const { data: accessoryTypes } = useQuery<AccessoryType>('SELECT id, name FROM accessory_types ORDER BY name')
   const { data: supplierOptions } = useQuery<SupplierOption>('SELECT id, name FROM suppliers ORDER BY name')
@@ -152,12 +162,21 @@ export function PurchasesPage() {
     setPurchaseDate(p.purchase_date)
     setSupplierId(p.supplier_id ?? '')
     setNotes(p.notes ?? '')
+    // Determine paperSubtype from variant
+    const editVariant = p.variant || ''
+    let editSubtype = ''
+    if (editVariant) {
+      if (VARIANT_PRESETS.carbon?.includes(editVariant)) editSubtype = 'carbon'
+      else if (VARIANT_PRESETS.color?.includes(editVariant)) editSubtype = 'color'
+      else editSubtype = 'carbon' // fallback for unknown variants
+    }
     setLines([{
       id: uuid(), category: p.category,
       brandId: p.category === 'ACCESSORY' ? (p.acc_brand_id ?? '') : (p.brand_id ?? ''),
       gsmId: p.category === 'ACCESSORY' ? (p.acc_gsm_id ?? '') : (p.gsm_id ?? ''),
       proportionId: p.proportion_id ?? '',
       accessoryId: p.category === 'ACCESSORY' ? (p.acc_type_id ?? '') : '',
+      paperSubtype: editSubtype, variant: editVariant, variantFilter: '', variantTab: '',
       quantity: String(p.quantity_reams), costPerUnit: String(poishaToBdt(p.cost_per_ream_poisha)),
     }])
     setOpen(true)
@@ -167,10 +186,26 @@ export function PurchasesPage() {
     setLines(prev => prev.map(l => {
       if (l.id !== id) return l
       const next = { ...l, ...patch }
-      if ('category' in patch) { next.brandId = ''; next.gsmId = ''; next.proportionId = ''; next.accessoryId = '' }
+      if ('category' in patch) { next.brandId = ''; next.gsmId = ''; next.proportionId = ''; next.accessoryId = ''; next.paperSubtype = ''; next.variant = ''; next.variantFilter = ''; next.variantTab = '' }
+      if ('paperSubtype' in patch) {
+        next.variant = ''; next.variantFilter = ''; next.variantTab = ''
+        // Auto-set GSM + size defaults for carbon/color paper
+        const st = patch.paperSubtype
+        if (st === 'carbon') {
+          const g47 = gsmOptions.find(g => g.value === 47)
+          const s23x36 = proportions.find(p => (Math.min(p.width_inches, p.height_inches) === 23 && Math.max(p.width_inches, p.height_inches) === 36))
+          if (g47) next.gsmId = g47.id
+          if (s23x36) next.proportionId = s23x36.id
+        } else if (st === 'color') {
+          const g42 = gsmOptions.find(g => g.value === 42)
+          const s18x23 = proportions.find(p => (Math.min(p.width_inches, p.height_inches) === 18 && Math.max(p.width_inches, p.height_inches) === 23))
+          if (g42) next.gsmId = g42.id
+          if (s18x23) next.proportionId = s18x23.id
+        }
+      }
       return next
     }))
-  }, [])
+  }, [gsmOptions, proportions])
 
   const addLine = () => setLines(prev => [...prev, emptyLine()])
   const removeLine = (id: string) => setLines(prev => prev.length > 1 ? prev.filter(l => l.id !== id) : prev)
@@ -203,7 +238,7 @@ export function PurchasesPage() {
         let accessoryId: string | null = null
 
         if (cat !== 'ACCESSORY') {
-          paperTypeId = await findOrCreatePaperType(line.brandId, line.gsmId, line.proportionId, cat)
+          paperTypeId = await findOrCreatePaperType(line.brandId, line.gsmId, line.proportionId, cat, line.variant)
         } else {
           accessoryId = await findOrCreateAccessory(line.accessoryId, line.brandId, line.gsmId)
         }
@@ -231,7 +266,7 @@ export function PurchasesPage() {
           let accessoryId: string | null = null
 
           if (cat !== 'ACCESSORY') {
-            paperTypeId = await findOrCreatePaperType(line.brandId, line.gsmId, line.proportionId, cat)
+            paperTypeId = await findOrCreatePaperType(line.brandId, line.gsmId, line.proportionId, cat, line.variant)
           } else {
             accessoryId = await findOrCreateAccessory(line.accessoryId, line.brandId, line.gsmId)
           }
@@ -259,9 +294,62 @@ export function PurchasesPage() {
     } finally { setSaving(false) }
   }
 
+  async function handleDelete() {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      // Find the stock_ledger entry for this purchase to know how many sheets to remove
+      const ledgerRows = await dbQuery<{ paper_type_id: string | null; accessory_id: string | null; quantity_sheets: number }>(
+        `SELECT paper_type_id, accessory_id, quantity_sheets FROM stock_ledger WHERE reference_id = ? AND transaction_type = 'PURCHASE'`,
+        [deleteTarget.id]
+      )
+
+      // Check current godown stock for each affected item
+      for (const entry of ledgerRows) {
+        const col = entry.paper_type_id ? 'paper_type_id' : 'accessory_id'
+        const id = entry.paper_type_id ?? entry.accessory_id
+        const stockRows = await dbQuery<{ total: number }>(
+          `SELECT COALESCE(SUM(quantity_sheets), 0) as total FROM stock_ledger WHERE ${col} = ?`,
+          [id]
+        )
+        const currentStock = stockRows[0]?.total ?? 0
+        if (currentStock < entry.quantity_sheets) {
+          addToast({
+            title: 'Cannot delete',
+            description: `Only ${currentStock} sheets remain in godown but this purchase added ${entry.quantity_sheets}. Some stock has already been transferred out.`,
+            variant: 'destructive',
+          })
+          setDeleting(false)
+          return
+        }
+      }
+
+      await dbTransaction([
+        { sql: `DELETE FROM stock_ledger WHERE reference_id = ? AND transaction_type = 'PURCHASE'`, params: [deleteTarget.id] },
+        { sql: `DELETE FROM purchases WHERE id = ?`, params: [deleteTarget.id] },
+      ])
+      addToast({ title: 'Purchase deleted', description: 'Stock ledger updated.' })
+      setDeleteTarget(null)
+      refetch(); refetchSummary()
+    } catch (err: any) {
+      addToast({ title: 'Delete failed', description: err.message, variant: 'destructive' })
+    } finally { setDeleting(false) }
+  }
+
   const filteredPurchases = purchases
+    .filter(p => {
+      if (summaryView === 'all') return true
+      if (summaryView === 'today') return p.purchase_date === today
+      if (summaryView === 'week') return p.purchase_date >= getWeekStart()
+      if (summaryView === 'month') return p.purchase_date >= getMonthStart()
+      if (summaryView === 'paper') return p.category === 'PAPER'
+      if (summaryView === 'card') return p.category === 'CARD'
+      if (summaryView === 'sticker') return p.category === 'STICKER'
+      if (summaryView === 'accessory') return p.category === 'ACCESSORY'
+      return true
+    })
     .filter(p => viewCategory === 'ALL' || p.category === viewCategory)
-    .filter(p => `${p.brand_name} ${p.gsm_value} ${formatSize(p.width_inches, p.height_inches)} ${p.accessory_name} ${p.display_supplier_name ?? ''}`.toLowerCase().includes(filter.toLowerCase()))
+    .filter(p => `${p.brand_name} ${p.gsm_value} ${formatSize(p.width_inches, p.height_inches)} ${p.variant || ''} ${p.accessory_name} ${p.display_supplier_name ?? ''}`.toLowerCase().includes(filter.toLowerCase()))
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -304,7 +392,7 @@ export function PurchasesPage() {
             <div className="grid grid-cols-3 gap-3">
               <div className="grid gap-1.5">
                 <Label>Purchase Date *</Label>
-                <Input type="date" value={purchaseDate} onChange={e => setPurchaseDate(e.target.value)} />
+                <DatePicker value={purchaseDate} onChange={setPurchaseDate} />
               </div>
               <div className="grid gap-1.5">
                 <Label>Supplier</Label>
@@ -323,12 +411,6 @@ export function PurchasesPage() {
             </div>
 
             {/* Lines */}
-            {!editingPurchase && (
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground uppercase">Items</span>
-                <Button variant="outline" size="sm" onClick={addLine}>Add Row</Button>
-              </div>
-            )}
 
             {lines.map((line, idx) => {
               const cat = line.category
@@ -375,10 +457,10 @@ export function PurchasesPage() {
                             </Select>
                           </div>
                           <div className="grid gap-1">
-                            <Label className="text-[10px] uppercase font-bold text-muted-foreground">Pound</Label>
+                            <Label className="text-[10px] uppercase font-bold text-muted-foreground">Unit</Label>
                             <Select value={line.gsmId} onValueChange={v => updateLine(line.id, { gsmId: v })}>
-                              <SelectTrigger className="h-8"><SelectValue placeholder="Pound" /></SelectTrigger>
-                              <SelectContent>{gsmOptions.map(g => <SelectItem key={g.id} value={g.id}>{g.value}</SelectItem>)}</SelectContent>
+                              <SelectTrigger className="h-8"><SelectValue placeholder="Unit" /></SelectTrigger>
+                              <SelectContent>{gsmOptions.map(g => <SelectItem key={g.id} value={g.id}>{g.value}{g.unit || 'lb'}</SelectItem>)}</SelectContent>
                             </Select>
                           </div>
                         </>
@@ -409,6 +491,61 @@ export function PurchasesPage() {
                       )}
                     </div>
 
+                    {/* Paper sub-type + variant (only for PAPER category) */}
+                    {cat === 'PAPER' && (
+                      <div className="grid grid-cols-2 gap-2 mb-2">
+                        <div className="grid gap-1">
+                          <Label className="text-[10px] uppercase font-bold text-muted-foreground">Paper Type</Label>
+                          <div className="flex gap-1">
+                            {PAPER_SUBTYPES.map(st => (
+                              <Button key={st.value} size="sm" variant={line.paperSubtype === st.value ? 'default' : 'outline'}
+                                onClick={() => updateLine(line.id, { paperSubtype: st.value })} className="text-xs h-7 px-2 flex-1">{st.label}</Button>
+                            ))}
+                          </div>
+                        </div>
+                        {line.paperSubtype && VARIANT_PRESETS[line.paperSubtype] && (() => {
+                          const presets = VARIANT_PRESETS[line.paperSubtype]!
+                          const tabs = VARIANT_TABS[line.paperSubtype] ?? []
+                          const tabFiltered = line.variantTab
+                            ? presets.filter(v => v.startsWith(line.variantTab + ' '))
+                            : presets
+                          const filtered = line.variantFilter
+                            ? tabFiltered.filter(v => v.toLowerCase().includes(line.variantFilter.toLowerCase()))
+                            : tabFiltered
+                          return (
+                            <div className="grid gap-1">
+                              <Label className="text-[10px] uppercase font-bold text-muted-foreground">Variant</Label>
+                              <Select value={line.variant} onValueChange={v => updateLine(line.id, { variant: v })}>
+                                <SelectTrigger className="h-8"><SelectValue placeholder="Select variant..." /></SelectTrigger>
+                                <SelectContent className="max-h-72" header={
+                                  <div className="flex flex-col gap-1.5">
+                                    {tabs.length > 0 && (
+                                      <div className="flex gap-1">
+                                        {tabs.map(t => (
+                                          <button key={t || 'ALL'} type="button"
+                                            className={`px-2 py-0.5 text-[10px] font-semibold rounded ${line.variantTab === t ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
+                                            onPointerDown={e => { e.preventDefault(); e.stopPropagation(); updateLine(line.id, { variantTab: t }) }}>
+                                            {t || 'All'}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
+                                    <Input placeholder="Search variants..." value={line.variantFilter}
+                                      onChange={e => updateLine(line.id, { variantFilter: e.target.value })}
+                                      className="h-8 text-sm" />
+                                  </div>
+                                }>
+                                  {filtered.length === 0 ? (
+                                    <div className="py-3 text-center text-sm text-muted-foreground">No variants found</div>
+                                  ) : filtered.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )
+                        })()}
+                      </div>
+                    )}
+
                     {/* Qty + Cost */}
                     <div className="grid grid-cols-2 gap-3">
                       <div className="grid gap-1">
@@ -430,13 +567,15 @@ export function PurchasesPage() {
                               <>
                                 {accessoryTypes.find(t => t.id === line.accessoryId)?.name || '...'} {' '}
                                 {brands.find(b => b.id === line.brandId)?.name || '...'} {' '}
-                                {gsmOptions.find(g => g.id === line.gsmId)?.value || '...'}lb
+                                {gsmOptions.find(g => g.id === line.gsmId)?.value || '...'}{gsmOptions.find(g => g.id === line.gsmId)?.unit || 'lb'}
                               </>
                             ) : (
                               <>
-                                {brands.find(b => b.id === line.brandId)?.name || '...'} {' '}
+                                {brands.find(b => b.id === line.brandId)?.name || '...'}
+                                {line.variant ? ` ${paperDisplayType(line.variant)}` : ''} {' '}
                                 {gsmOptions.find(g => g.id === line.gsmId)?.value || '...'}gsm {' '}
                                 {proportions.find(p => p.id === line.proportionId) ? formatSize(proportions.find(p => p.id === line.proportionId)!.width_inches, proportions.find(p => p.id === line.proportionId)!.height_inches) : '...'}
+                                {line.variant ? ` ${line.variant}` : ''}
                               </>
                             )}
                           </span>
@@ -452,6 +591,10 @@ export function PurchasesPage() {
               )
             })}
           </div>
+
+          {!editingPurchase && (
+            <Button variant="outline" size="sm" onClick={addLine} className="w-full">+ Add Row</Button>
+          )}
 
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => { setOpen(false); resetForm() }} disabled={saving}>Cancel</Button>
@@ -473,7 +616,7 @@ export function PurchasesPage() {
             <TabsTrigger value="ACCESSORY">Accessories</TabsTrigger>
           </TabsList>
         </Tabs>
-        <Input placeholder="Search purchases..." value={filter} onChange={e => setFilter(e.target.value)} className="max-w-sm" />
+        <Input placeholder="Search purchases..." value={filter} onChange={e => setFilter(e.target.value)} onFocus={() => setViewCategory('ALL')} className="max-w-sm" />
         <div className="flex-1" />
         <Button onClick={openNew}>+ New Purchase</Button>
       </div>
@@ -503,22 +646,32 @@ export function PurchasesPage() {
             <TableBody>
               {filteredPurchases.map(p => {
                 const pCat = (p.category || 'PAPER') as Category
-                const productLabel = pCat === 'ACCESSORY' 
-                  ? `${p.accessory_name} ${p.brand_name} ${p.gsm_value}lb`
-                  : `${p.brand_name} ${p.gsm_value}gsm ${formatSize(p.width_inches, p.height_inches)}`
+                const productLabel = pCat === 'ACCESSORY'
+                  ? `${p.accessory_name} ${p.brand_name} ${p.gsm_value}${p.acc_gsm_unit}`
+                  : `${p.brand_name}${p.variant ? ' ' + paperDisplayType(p.variant) : ''} ${p.gsm_value}gsm ${formatSize(p.width_inches, p.height_inches)}${p.variant ? ' ' + p.variant : ''}`
                 
                 return (
                   <TableRow key={p.id}>
                     <TableCell className="whitespace-nowrap">{formatDate(p.purchase_date)}</TableCell>
                     <TableCell>{productLabel}</TableCell>
                     <TableCell>
-                      <Badge variant={pCat === 'PAPER' ? 'secondary' : 'outline'} className={`text-[10px] px-1.5 py-0 ${pCat === 'CARD' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' : pCat === 'STICKER' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' : pCat === 'ACCESSORY' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200' : ''}`}>{pCat}</Badge>
+                      {(() => {
+                        const displayType = pCat === 'PAPER' ? paperDisplayType(p.variant) : pCat
+                        const isCarbon = displayType === 'Carbon Paper'
+                        const isColor = displayType === 'Color Paper'
+                        return <Badge variant={pCat === 'PAPER' && !isCarbon && !isColor ? 'secondary' : 'outline'} className={`text-[10px] px-1.5 py-0 ${pCat === 'CARD' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' : pCat === 'STICKER' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' : pCat === 'ACCESSORY' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200' : isCarbon ? 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200' : isColor ? 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200' : ''}`}>{displayType}</Badge>
+                      })()}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{p.quantity_reams} {unitLabelPlural(pCat)}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatBDT(p.cost_per_ream_poisha)}</TableCell>
                     <TableCell className="text-right tabular-nums font-medium">{formatBDT(p.cost_per_ream_poisha * p.quantity_reams)}</TableCell>
                     <TableCell className="text-muted-foreground">{p.display_supplier_name ?? '—'}</TableCell>
-                    <TableCell><button onClick={() => openEdit(p)} className="text-xs text-primary hover:underline">Edit</button></TableCell>
+                    <TableCell>
+                      <div className="flex gap-2">
+                        <button onClick={() => openEdit(p)} className="text-xs text-primary hover:underline">Edit</button>
+                        <button onClick={() => setDeleteTarget(p)} className="text-xs text-destructive hover:underline">Delete</button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 )
               })}
@@ -526,6 +679,33 @@ export function PurchasesPage() {
           </Table>
         </div>
       )}
+
+      {/* Delete confirmation */}
+      <Dialog open={!!deleteTarget} onOpenChange={v => { if (!v) setDeleteTarget(null) }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Delete Purchase</DialogTitle></DialogHeader>
+          {deleteTarget && (() => {
+            const pCat = (deleteTarget.category || 'PAPER') as Category
+            const label = pCat === 'ACCESSORY'
+              ? `${deleteTarget.accessory_name} ${deleteTarget.brand_name} ${deleteTarget.gsm_value}${deleteTarget.acc_gsm_unit}`
+              : `${deleteTarget.brand_name}${deleteTarget.variant ? ' ' + paperDisplayType(deleteTarget.variant) : ''} ${deleteTarget.gsm_value}gsm ${formatSize(deleteTarget.width_inches, deleteTarget.height_inches)}${deleteTarget.variant ? ' ' + deleteTarget.variant : ''}`
+            return (
+              <div className="flex flex-col gap-3 pt-2">
+                <p className="text-sm text-muted-foreground">
+                  This will delete the purchase of <span className="font-semibold text-foreground">{deleteTarget.quantity_reams} {unitLabelPlural(pCat)}</span> of{' '}
+                  <span className="font-semibold text-foreground">{label}</span> ({formatDate(deleteTarget.purchase_date)}) and remove the corresponding stock from godown.
+                </p>
+                <div className="flex justify-end gap-2 pt-1">
+                  <DialogClose asChild><Button variant="outline" disabled={deleting}>Cancel</Button></DialogClose>
+                  <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
+                    {deleting ? 'Deleting...' : 'Delete Purchase'}
+                  </Button>
+                </div>
+              </div>
+            )
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

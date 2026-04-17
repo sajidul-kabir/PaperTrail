@@ -14,7 +14,7 @@ import type { Category } from '@/lib/paper-type'
 // ─── Shared Types ────────────────────────────────────────────────────────────
 
 interface Brand { id: string; name: string }
-interface GsmOption { id: string; value: number }
+interface GsmOption { id: string; value: number; unit: string }
 interface Proportion { id: string; width_inches: number; height_inches: number }
 interface AccessoryType { id: string; name: string }
 
@@ -105,20 +105,23 @@ function BrandsSection({ category }: { category: Category }) {
 function GsmSection({ category }: { category: Category }) {
   const { addToast } = useToast()
   const { data: gsmOptions, refetch } = useQuery<GsmOption>(
-    `SELECT id, value FROM gsm_options WHERE category = ? ORDER BY value`, [category], [category]
+    `SELECT id, value, COALESCE(unit, '') as unit FROM gsm_options WHERE category = ? ORDER BY value`, [category], [category]
   )
   const [value, setValue] = useState('')
+  const [unit, setUnit] = useState('lb')
   const [saving, setSaving] = useState(false)
   const [filter, setFilter] = useState('')
 
-  const label = category === 'ACCESSORY' ? 'Pound' : 'GSM'
+  const isAccessory = category === 'ACCESSORY'
+  const label = isAccessory ? 'Unit' : 'GSM'
 
   async function handleAdd() {
     const parsed = parseInt(value.trim(), 10)
-    if (!value.trim() || isNaN(parsed) || parsed < 0) { addToast({ title: `Valid ${label} value required`, variant: 'destructive' }); return }
+    if (!value.trim() || isNaN(parsed) || parsed < 0) { addToast({ title: `Valid ${isAccessory ? 'value' : 'GSM'} required`, variant: 'destructive' }); return }
+    if (isAccessory && !unit.trim()) { addToast({ title: 'Select a unit', variant: 'destructive' }); return }
     setSaving(true)
     try {
-      await dbRun('INSERT INTO gsm_options (id, value, category) VALUES (?, ?, ?)', [uuid(), parsed, category])
+      await dbRun('INSERT INTO gsm_options (id, value, category, unit) VALUES (?, ?, ?, ?)', [uuid(), parsed, category, isAccessory ? unit.trim() : ''])
       setValue('')
       refetch()
       addToast({ title: `${label} option added` })
@@ -131,19 +134,26 @@ function GsmSection({ category }: { category: Category }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <Input type="number" placeholder={`${label} (e.g. ${category === 'ACCESSORY' ? '10' : '80'})`} value={value} onChange={e => setValue(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleAdd()} className="max-w-xs" min={0} />
-        <Button onClick={handleAdd} disabled={saving} size="sm">Add {label}</Button>
+        <Input type="number" placeholder={isAccessory ? 'Value (e.g. 10)' : 'GSM (e.g. 80)'} value={value} onChange={e => setValue(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleAdd()} className="w-36" min={0} />
+        {isAccessory && (
+          <select value={unit} onChange={e => setUnit(e.target.value)}
+            className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm">
+            <option value="lb">pound</option>
+            <option value="pc">piece</option>
+          </select>
+        )}
+        <Button onClick={handleAdd} disabled={saving} size="sm">Add {isAccessory ? 'Unit' : 'GSM'}</Button>
         <Input placeholder="Search..." value={filter} onChange={e => setFilter(e.target.value)} className="max-w-xs" />
       </div>
       <Table>
         <TableHeader><TableRow><TableHead>{label}</TableHead><TableHead className="w-16" /></TableRow></TableHeader>
         <TableBody>
           {filtered.length === 0 ? (
-            <TableRow><TableCell colSpan={2} className="text-muted-foreground italic">No {label.toLowerCase()} options yet.</TableCell></TableRow>
+            <TableRow><TableCell colSpan={2} className="text-muted-foreground italic">No options yet.</TableCell></TableRow>
           ) : filtered.map(g => (
             <TableRow key={g.id}>
-              <TableCell>{g.value} {label.toLowerCase()}</TableCell>
+              <TableCell>{g.value} {isAccessory ? (g.unit || 'lb') : 'gsm'}</TableCell>
               <TableCell>
                 <button className="text-muted-foreground hover:text-destructive transition-colors" title="Delete"
                   onClick={async () => {
@@ -326,7 +336,7 @@ function CategoryPanel({ category }: { category: Category }) {
     <Tabs defaultValue="brands">
       <TabsList>
         <TabsTrigger value="brands">Brands</TabsTrigger>
-        <TabsTrigger value="gsm">{category === 'ACCESSORY' ? 'Pounds' : 'GSM'}</TabsTrigger>
+        <TabsTrigger value="gsm">{category === 'ACCESSORY' ? 'Units' : 'GSM'}</TabsTrigger>
         {category !== 'ACCESSORY' && <TabsTrigger value="sizes">Sizes</TabsTrigger>}
         {category === 'ACCESSORY' && <TabsTrigger value="types">Names</TabsTrigger>}
       </TabsList>

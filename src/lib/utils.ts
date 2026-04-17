@@ -49,8 +49,11 @@ export function formatSize(w: number, h: number): string {
 }
 
 /** Build paper type label from parts */
-export function paperTypeLabel(brandName: string, gsmValue: number, width: number, height: number): string {
-  return `${brandName} ${gsmValue}gsm ${formatSize(width, height)}`
+export function paperTypeLabel(brandName: string, gsmValue: number, width: number, height: number, variant?: string): string {
+  if (!variant) return `${brandName} ${gsmValue}gsm ${formatSize(width, height)}`
+  const v = variant.toUpperCase()
+  const subtype = (v.startsWith('CB ') || v.startsWith('CFB ') || v.startsWith('CF ')) ? 'Carbon Paper' : 'Color Paper'
+  return `${brandName} ${subtype} ${gsmValue}gsm ${formatSize(width, height)} ${variant}`
 }
 
 /** Profit margin color class */

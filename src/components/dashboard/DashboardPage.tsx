@@ -117,7 +117,7 @@ export function DashboardPage() {
      stock AS (
        SELECT
          sl.paper_type_id,
-         (b.name || ' ' || g.value || 'gsm ' || MIN(p.width_inches, p.height_inches) || 'x' || MAX(p.width_inches, p.height_inches)) AS paper_type_label,
+         (b.name || CASE WHEN pt.variant != '' THEN CASE WHEN pt.variant LIKE 'CB %' OR pt.variant LIKE 'CFB %' OR pt.variant LIKE 'CF %' THEN ' Carbon Paper' ELSE ' Color Paper' END ELSE '' END || ' ' || g.value || 'gsm ' || MIN(p.width_inches, p.height_inches) || 'x' || MAX(p.width_inches, p.height_inches) || CASE WHEN pt.variant != '' THEN ' ' || pt.variant ELSE '' END) AS paper_type_label,
          ROUND(SUM(sl.quantity_sheets) / 500.0, 2) AS total_reams
        FROM stock_ledger sl
        JOIN paper_types pt ON pt.id = sl.paper_type_id

@@ -3,6 +3,8 @@ import { v4 as uuid } from 'uuid'
 import { useQuery } from '@/hooks/useQuery'
 import { dbTransaction } from '@/lib/ipc'
 import { piecesPerSheet } from '@/lib/calculations'
+import { paperDisplayType } from '@/lib/paper-type'
+import type { Category } from '@/lib/paper-type'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -29,14 +31,15 @@ SELECT
     ELSE 0
   END as avg_cost_per_piece_poisha,
   COALESCE(
-    b.name || ' ' || g.value || 'gsm ' || MIN(p.width_inches, p.height_inches) || 'x' || MAX(p.width_inches, p.height_inches),
-    at.name || ' ' || ab.name || ' ' || ag.value || 'lb',
+    b.name || CASE WHEN pt.variant != '' THEN CASE WHEN pt.variant LIKE 'CB %' OR pt.variant LIKE 'CFB %' OR pt.variant LIKE 'CF %' THEN ' Carbon Paper' ELSE ' Color Paper' END ELSE '' END || ' ' || g.value || 'gsm ' || MIN(p.width_inches, p.height_inches) || 'x' || MAX(p.width_inches, p.height_inches) || CASE WHEN pt.variant != '' THEN ' ' || pt.variant ELSE '' END,
+    at.name || ' ' || ab.name || ' ' || ag.value || COALESCE(ag.unit, 'lb'),
     'Unknown'
   ) as label,
   COALESCE(pt.category, 'ACCESSORY') as category,
   COALESCE(g.value, ag.value, 0) as gsm_value,
   COALESCE(p.width_inches, 0) as full_width_inches,
-  COALESCE(p.height_inches, 0) as full_height_inches
+  COALESCE(p.height_inches, 0) as full_height_inches,
+  COALESCE(pt.variant, '') as variant
 FROM cutting_stock cs
 LEFT JOIN paper_types pt ON pt.id = cs.paper_type_id
 LEFT JOIN brands b ON b.id = pt.brand_id
@@ -54,7 +57,8 @@ ORDER BY category, label, cs.cut_width_inches, cs.cut_height_inches
 const PAPER_TYPES_SQL = `
   SELECT pt.id, pt.category,
     b.name as brand_name, g.value as gsm_value,
-    p.width_inches, p.height_inches
+    p.width_inches, p.height_inches,
+    COALESCE(pt.variant, '') as variant
   FROM paper_types pt
   JOIN brands b ON b.id = pt.brand_id
   JOIN gsm_options g ON g.id = pt.gsm_id
@@ -76,6 +80,7 @@ interface CuttingRow {
   gsm_value: number
   full_width_inches: number
   full_height_inches: number
+  variant: string
 }
 
 interface PaperTypeRow {
@@ -85,6 +90,7 @@ interface PaperTypeRow {
   gsm_value: number
   width_inches: number
   height_inches: number
+  variant: string
 }
 
 interface AddForm {
@@ -102,7 +108,7 @@ const emptyAddForm: AddForm = { paperTypeId: '', cutWidth: '', cutHeight: '', pi
 
 export function CuttingInventoryPage() {
   const [filter, setFilter] = useState('')
-  const [gsmTab, setGsmTab] = useState<string>('ALL')
+  const [viewCategory, setViewCategory] = useState<'ALL' | Category>('ALL')
   const [deleteTarget, setDeleteTarget] = useState<CuttingRow | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
@@ -112,10 +118,8 @@ export function CuttingInventoryPage() {
   const { data: paperTypes } = useQuery<PaperTypeRow>(PAPER_TYPES_SQL)
   const { addToast } = useToast()
 
-  const gsmValues = Array.from(new Set(rows.filter(r => r.gsm_value > 0).map(r => r.gsm_value))).sort((a, b) => a - b)
-
   const filtered = rows
-    .filter(row => gsmTab === 'ALL' || (row.gsm_value > 0 && String(row.gsm_value) === gsmTab) || (gsmTab === 'OTHER' && row.gsm_value === 0))
+    .filter(row => viewCategory === 'ALL' || row.category === viewCategory)
     .filter(row => {
       const searchStr = `${row.label} ${row.cut_width_inches ?? ''}x${row.cut_height_inches ?? ''} ${row.category}`.toLowerCase()
       return searchStr.includes(filter.toLowerCase())
@@ -191,7 +195,7 @@ export function CuttingInventoryPage() {
       }])
 
       const pt = paperTypes.find(p => p.id === addForm.paperTypeId)
-      addToast({ title: 'Custom stock added', description: `${pcs} pieces of ${pt ? paperTypeLabel(pt.brand_name, pt.gsm_value, pt.width_inches, pt.height_inches) : 'item'} ${cutW}x${cutH} added.` })
+      addToast({ title: 'Custom stock added', description: `${pcs} pieces of ${pt ? paperTypeLabel(pt.brand_name, pt.gsm_value, pt.width_inches, pt.height_inches, pt.variant) : 'item'} ${cutW}x${cutH} added.` })
       setAddOpen(false)
       setAddForm(emptyAddForm)
       refetch()
@@ -209,7 +213,7 @@ export function CuttingInventoryPage() {
 
   // Filter paper types for the add dialog
   const filteredPaperTypes = addForm.ptFilter
-    ? paperTypes.filter(pt => `${pt.category} ${pt.brand_name} ${pt.gsm_value} ${formatSize(pt.width_inches, pt.height_inches)}`.toLowerCase().includes(addForm.ptFilter.toLowerCase()))
+    ? paperTypes.filter(pt => `${pt.category} ${pt.brand_name} ${pt.gsm_value} ${formatSize(pt.width_inches, pt.height_inches)} ${pt.variant}`.toLowerCase().includes(addForm.ptFilter.toLowerCase()))
     : paperTypes
 
   const selectedPt = paperTypes.find(p => p.id === addForm.paperTypeId)
@@ -238,19 +242,17 @@ export function CuttingInventoryPage() {
 
       {!loading && !error && (
         <>
-          <div className="flex items-center gap-4 flex-wrap">
-            {gsmValues.length > 0 && (
-              <Tabs value={gsmTab} onValueChange={setGsmTab}>
-                <TabsList>
-                  <TabsTrigger value="ALL">All</TabsTrigger>
-                  {gsmValues.map(g => (
-                    <TabsTrigger key={g} value={String(g)}>{g} gsm</TabsTrigger>
-                  ))}
-                  {rows.some(r => r.gsm_value === 0) && <TabsTrigger value="OTHER">Accessories</TabsTrigger>}
-                </TabsList>
-              </Tabs>
-            )}
-            <Input placeholder="Search cutting stock..." value={filter} onChange={e => setFilter(e.target.value)} className="max-w-sm" />
+          <div className="flex items-center gap-4">
+            <Tabs value={viewCategory} onValueChange={v => setViewCategory(v as any)}>
+              <TabsList>
+                <TabsTrigger value="ALL">All</TabsTrigger>
+                <TabsTrigger value="PAPER">Paper</TabsTrigger>
+                <TabsTrigger value="CARD">Card</TabsTrigger>
+                <TabsTrigger value="STICKER">Sticker</TabsTrigger>
+                <TabsTrigger value="ACCESSORY">Accessory</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <Input placeholder="Search cutting stock..." value={filter} onChange={e => setFilter(e.target.value)} onFocus={() => setViewCategory('ALL')} className="max-w-sm" />
           </div>
 
           <div className="rounded-md border">
@@ -284,8 +286,13 @@ export function CuttingInventoryPage() {
                     <TableRow key={i} className={cn(isLow && 'bg-destructive/10 hover:bg-destructive/15')}>
                       <TableCell className="font-medium">{row.label}</TableCell>
                       <TableCell>
-                        <Badge variant={cat === 'PAPER' ? 'secondary' : 'outline'}
-                          className={`text-[10px] px-1.5 py-0 ${categoryBadgeClass(cat)}`}>{cat}</Badge>
+                        {(() => {
+                          const displayType = cat === 'PAPER' ? paperDisplayType(row.variant) : cat
+                          const isCarbon = displayType === 'Carbon Paper'
+                          const isColor = displayType === 'Color Paper'
+                          return <Badge variant={cat === 'PAPER' && !isCarbon && !isColor ? 'secondary' : 'outline'}
+                            className={`text-[10px] px-1.5 py-0 ${isCarbon ? 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200' : isColor ? 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200' : categoryBadgeClass(cat)}`}>{displayType}</Badge>
+                        })()}
                       </TableCell>
                       <TableCell className="tabular-nums">
                         {isAcc ? '—' : (row.cut_width_inches && row.cut_height_inches
@@ -354,7 +361,7 @@ export function CuttingInventoryPage() {
                 <SelectContent className="max-h-72" header={
                   <Input placeholder="Search..." value={addForm.ptFilter}
                     onChange={e => setAddForm(f => ({ ...f, ptFilter: e.target.value }))}
-                    onKeyDown={e => e.stopPropagation()} className="h-8 text-sm" />
+                    className="h-8 text-sm" />
                 }>
                   {filteredPaperTypes.length === 0 ? (
                     <div className="py-3 text-center text-sm text-muted-foreground">No products found</div>
@@ -364,7 +371,7 @@ export function CuttingInventoryPage() {
                         <span className={`text-[9px] font-semibold px-1 rounded ${categoryBadgeClass(pt.category)} ${pt.category === 'PAPER' ? 'bg-secondary text-secondary-foreground' : ''}`}>
                           {pt.category.charAt(0)}
                         </span>
-                        <span>{paperTypeLabel(pt.brand_name, pt.gsm_value, pt.width_inches, pt.height_inches)}</span>
+                        <span>{paperTypeLabel(pt.brand_name, pt.gsm_value, pt.width_inches, pt.height_inches, pt.variant)}</span>
                       </div>
                     </SelectItem>
                   ))}

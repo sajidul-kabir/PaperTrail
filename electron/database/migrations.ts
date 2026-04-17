@@ -476,6 +476,34 @@ const migrations: { version: number; sql: string }[] = [
       ALTER TABLE cutting_stock ADD COLUMN custom_label TEXT;
     `,
   },
+  {
+    version: 9,
+    sql: `
+      -- Add variant column to paper_types for carbon/color paper sub-types
+      CREATE TABLE paper_types_v9 (
+        id TEXT PRIMARY KEY,
+        brand_id TEXT NOT NULL REFERENCES brands(id),
+        gsm_id TEXT NOT NULL REFERENCES gsm_options(id),
+        proportion_id TEXT NOT NULL REFERENCES proportions(id),
+        category TEXT NOT NULL DEFAULT 'PAPER' CHECK(category IN ('PAPER', 'CARD', 'STICKER')),
+        variant TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(brand_id, gsm_id, proportion_id, category, variant)
+      );
+      INSERT INTO paper_types_v9 (id, brand_id, gsm_id, proportion_id, category, variant, created_at)
+        SELECT id, brand_id, gsm_id, proportion_id, category, '', created_at FROM paper_types;
+      DROP TABLE paper_types;
+      ALTER TABLE paper_types_v9 RENAME TO paper_types;
+    `,
+  },
+  {
+    version: 10,
+    sql: `
+      -- Add unit label to gsm_options (e.g. 'lb', 'litre' for accessories; empty for paper/card/sticker which use 'gsm')
+      ALTER TABLE gsm_options ADD COLUMN unit TEXT NOT NULL DEFAULT '';
+      UPDATE gsm_options SET unit = 'lb' WHERE category = 'ACCESSORY';
+    `,
+  },
 ]
 
 export function runMigrations(db: Database.Database) {

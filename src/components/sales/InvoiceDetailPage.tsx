@@ -79,8 +79,8 @@ const LINES_SQL = `
          il.paper_type_id,
          il.accessory_id,
          COALESCE(
-           b.name || ' ' || g.value || 'gsm ' || MIN(p.width_inches, p.height_inches) || 'x' || MAX(p.width_inches, p.height_inches),
-           at.name || ' ' || ab.name || ' ' || ag.value || 'lb',
+           b.name || CASE WHEN pt.variant != '' THEN CASE WHEN pt.variant LIKE 'CB %' OR pt.variant LIKE 'CFB %' OR pt.variant LIKE 'CF %' THEN ' Carbon Paper' ELSE ' Color Paper' END ELSE '' END || ' ' || g.value || 'gsm ' || MIN(p.width_inches, p.height_inches) || 'x' || MAX(p.width_inches, p.height_inches) || CASE WHEN pt.variant != '' THEN ' ' || pt.variant ELSE '' END,
+           at.name || ' ' || ab.name || ' ' || ag.value || COALESCE(ag.unit, 'lb'),
            'Unknown'
          ) AS paper_type_label,
          COALESCE(p.width_inches, 0) AS full_width_inches,
