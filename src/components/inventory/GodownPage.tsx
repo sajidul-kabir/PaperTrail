@@ -136,7 +136,7 @@ export function GodownPage() {
 
   const filteredRows = stockRows
     .filter(row => viewCategory === 'ALL' || row.category === viewCategory)
-    .filter(row => `${row.brand_name} ${row.gsm_value} ${formatSize(row.width_inches, row.height_inches)} ${row.variant}`.toLowerCase().includes(filter.toLowerCase()))
+    .filter(row => `${paperTypeLabel(row.brand_name, row.gsm_value, row.width_inches, row.height_inches, row.variant)}`.toLowerCase().includes(filter.toLowerCase()))
 
   const filteredAccessoryRows = accessoryStockRows
     .filter(() => viewCategory === 'ALL' || viewCategory === 'ACCESSORY')

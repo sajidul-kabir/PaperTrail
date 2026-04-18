@@ -104,11 +104,18 @@ interface PurchaseLine {
   category: Category
   brandId: string; gsmId: string; proportionId: string; accessoryId: string
   paperSubtype: string; variant: string; variantFilter: string; variantTab: string
-  quantity: string; costPerUnit: string
+  quantity: string; extraSheets: string; costPerUnit: string
 }
 
 function emptyLine(): PurchaseLine {
-  return { id: uuid(), category: 'PAPER', brandId: '', gsmId: '', proportionId: '', accessoryId: '', paperSubtype: '', variant: '', variantFilter: '', variantTab: '', quantity: '', costPerUnit: '' }
+  return { id: uuid(), category: 'PAPER', brandId: '', gsmId: '', proportionId: '', accessoryId: '', paperSubtype: '', variant: '', variantFilter: '', variantTab: '', quantity: '', extraSheets: '', costPerUnit: '' }
+}
+
+/** Compute effective units (reams/packets) from quantity + extra sheets */
+function effectiveQty(line: PurchaseLine, spu: number): number {
+  const units = parseFloat(line.quantity) || 0
+  const extra = parseInt(line.extraSheets) || 0
+  return units + extra / spu
 }
 
 /** Tab groups for variant filtering */
@@ -135,6 +142,7 @@ export function PurchasesPage() {
   const [supplierId, setSupplierId] = useState('')
   const [notes, setNotes] = useState('')
   const [lines, setLines] = useState<PurchaseLine[]>([emptyLine()])
+  const [expandedLineId, setExpandedLineId] = useState<string>(lines[0]?.id ?? '')
 
   // The "active" category for catalog lookups (from first line or editing line)
   const activeCat = lines[0]?.category ?? 'PAPER'
@@ -152,7 +160,8 @@ export function PurchasesPage() {
 
   function resetForm() {
     setPurchaseDate(todayISO()); setSupplierId(''); setNotes('')
-    setLines([emptyLine()]); setEditingPurchase(null)
+    const first = emptyLine()
+    setLines([first]); setExpandedLineId(first.id); setEditingPurchase(null)
   }
 
   function openNew() { resetForm(); setOpen(true) }
@@ -170,14 +179,23 @@ export function PurchasesPage() {
       else if (VARIANT_PRESETS.color?.includes(editVariant)) editSubtype = 'color'
       else editSubtype = 'carbon' // fallback for unknown variants
     }
+    const editLineId = uuid()
+    setExpandedLineId(editLineId)
     setLines([{
-      id: uuid(), category: p.category,
+      id: editLineId, category: p.category,
       brandId: p.category === 'ACCESSORY' ? (p.acc_brand_id ?? '') : (p.brand_id ?? ''),
       gsmId: p.category === 'ACCESSORY' ? (p.acc_gsm_id ?? '') : (p.gsm_id ?? ''),
       proportionId: p.proportion_id ?? '',
       accessoryId: p.category === 'ACCESSORY' ? (p.acc_type_id ?? '') : '',
       paperSubtype: editSubtype, variant: editVariant, variantFilter: '', variantTab: '',
-      quantity: String(p.quantity_reams), costPerUnit: String(poishaToBdt(p.cost_per_ream_poisha)),
+      quantity: String(Math.floor(p.quantity_reams)),
+      extraSheets: (() => {
+        const spu = sheetsPerUnit(p.category)
+        const frac = p.quantity_reams - Math.floor(p.quantity_reams)
+        const sheets = Math.round(frac * spu)
+        return sheets > 0 ? String(sheets) : ''
+      })(),
+      costPerUnit: String(poishaToBdt(p.cost_per_ream_poisha)),
     }])
     setOpen(true)
   }
@@ -207,7 +225,11 @@ export function PurchasesPage() {
     }))
   }, [gsmOptions, proportions])
 
-  const addLine = () => setLines(prev => [...prev, emptyLine()])
+  const addLine = () => {
+    const newLine = emptyLine()
+    setLines(prev => [...prev, newLine])
+    setExpandedLineId(newLine.id)
+  }
   const removeLine = (id: string) => setLines(prev => prev.length > 1 ? prev.filter(l => l.id !== id) : prev)
 
   async function handleSave() {
@@ -221,8 +243,9 @@ export function PurchasesPage() {
       } else {
         if (!line.brandId || !line.gsmId || !line.proportionId) { addToast({ title: 'Select brand, GSM, and size for all lines', variant: 'destructive' }); return }
       }
-      const qty = parseFloat(line.quantity)
-      if (!line.quantity || isNaN(qty) || qty <= 0) { addToast({ title: 'Enter valid quantity', variant: 'destructive' }); return }
+      const spu = sheetsPerUnit(line.category)
+      const totalQty = effectiveQty(line, spu)
+      if (totalQty <= 0) { addToast({ title: 'Enter valid quantity', variant: 'destructive' }); return }
       const cost = parseFloat(line.costPerUnit)
       if (!line.costPerUnit || isNaN(cost) || cost <= 0) { addToast({ title: 'Enter valid cost', variant: 'destructive' }); return }
     }
@@ -243,7 +266,7 @@ export function PurchasesPage() {
           accessoryId = await findOrCreateAccessory(line.accessoryId, line.brandId, line.gsmId)
         }
 
-        const qty = parseFloat(line.quantity)
+        const qty = effectiveQty(line, spu)
         const costPoisha = bdtToPoisha(parseFloat(line.costPerUnit))
         const quantitySheets = Math.round(qty * spu)
 
@@ -271,7 +294,7 @@ export function PurchasesPage() {
             accessoryId = await findOrCreateAccessory(line.accessoryId, line.brandId, line.gsmId)
           }
 
-          const qty = parseFloat(line.quantity)
+          const qty = effectiveQty(line, spu)
           const costPoisha = bdtToPoisha(parseFloat(line.costPerUnit))
           const quantitySheets = Math.round(qty * spu)
           const purchaseId = uuid()
@@ -384,7 +407,7 @@ export function PurchasesPage() {
 
       {/* ── Purchase Dialog ──────────────────────────────────────────────── */}
       <Dialog open={open} onOpenChange={v => { setOpen(v); if (!v) resetForm() }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" onInteractOutside={e => e.preventDefault()}>
           <DialogHeader><DialogTitle>{editingPurchase ? 'Edit Purchase' : 'Record Purchases'}</DialogTitle></DialogHeader>
 
           <div className="grid gap-4 py-2">
@@ -417,8 +440,42 @@ export function PurchasesPage() {
               const spu = sheetsPerUnit(cat)
               const uLbl = unitLabel(cat)
               const uLblP = unitLabelPlural(cat)
-              const qty = parseFloat(line.quantity) || 0
+              const qty = effectiveQty(line, spu)
               const cost = parseFloat(line.costPerUnit) || 0
+              const isExpanded = expandedLineId === line.id
+
+              // Build compact summary label for collapsed view
+              const summaryLabel = (() => {
+                if (cat === 'ACCESSORY') {
+                  const name = accessoryTypes.find(t => t.id === line.accessoryId)?.name || ''
+                  const brand = brands.find(b => b.id === line.brandId)?.name || ''
+                  return name && brand ? `${name} ${brand}` : 'Untitled'
+                }
+                const brand = brands.find(b => b.id === line.brandId)?.name || ''
+                const gsm = gsmOptions.find(g => g.id === line.gsmId)?.value
+                const size = proportions.find(p => p.id === line.proportionId)
+                const sizeStr = size ? formatSize(size.width_inches, size.height_inches) : ''
+                const parts = [brand, gsm ? `${gsm}gsm` : '', sizeStr, line.variant].filter(Boolean)
+                return parts.length > 0 ? parts.join(' ') : 'Untitled'
+              })()
+              const totalSheets = Math.round(qty * spu)
+
+              // Collapsed view
+              if (!isExpanded && !editingPurchase) {
+                return (
+                  <Card key={line.id} tabIndex={0} className="cursor-pointer hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 transition-colors" onClick={() => setExpandedLineId(line.id)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpandedLineId(line.id) } }}>
+                    <CardContent className="py-2 flex items-center gap-3">
+                      <span className="text-xs font-semibold text-muted-foreground w-5">#{idx + 1}</span>
+                      <span className="text-sm font-medium flex-1 truncate">{summaryLabel}</span>
+                      {totalSheets > 0 && <span className="text-xs tabular-nums text-muted-foreground">{totalSheets.toLocaleString()} sheets</span>}
+                      {cost > 0 && qty > 0 && <span className="text-xs tabular-nums font-medium">{formatBDT(bdtToPoisha(cost * qty))}</span>}
+                      {lines.length > 1 && (
+                        <button className="text-muted-foreground hover:text-destructive text-lg leading-none ml-1" onClick={e => { e.stopPropagation(); removeLine(line.id) }}>×</button>
+                      )}
+                    </CardContent>
+                  </Card>
+                )
+              }
 
               return (
                 <Card key={line.id}>
@@ -547,11 +604,17 @@ export function PurchasesPage() {
                     )}
 
                     {/* Qty + Cost */}
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className={`grid gap-3 ${cat !== 'ACCESSORY' ? 'grid-cols-3' : 'grid-cols-2'}`}>
                       <div className="grid gap-1">
                         <Label className="text-xs">Qty ({uLblP})</Label>
-                        <Input className="h-8" type="number" min="0.01" step="0.01" value={line.quantity} onChange={e => updateLine(line.id, { quantity: e.target.value })} />
+                        <Input className="h-8" type="number" min="0" step="1" value={line.quantity} onChange={e => updateLine(line.id, { quantity: e.target.value })} />
                       </div>
+                      {cat !== 'ACCESSORY' && (
+                        <div className="grid gap-1">
+                          <Label className="text-xs">+ Sheets</Label>
+                          <Input className="h-8" type="number" min="0" step="1" placeholder="0" value={line.extraSheets} onChange={e => updateLine(line.id, { extraSheets: e.target.value })} />
+                        </div>
+                      )}
                       <div className="grid gap-1">
                         <Label className="text-xs">Cost/{uLbl} (BDT)</Label>
                         <Input className="h-8" type="number" min="0.01" step="0.01" value={line.costPerUnit} onChange={e => updateLine(line.id, { costPerUnit: e.target.value })} />

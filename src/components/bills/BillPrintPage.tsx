@@ -61,21 +61,32 @@ export function BillPrintPage() {
     )
   }
 
-  const emptyRows = Math.max(0, 12 - data.lines.length)
+  const ROWS_PER_PAGE = 15
+  // Chunk lines into pages
+  const pages: PrintLine[][] = []
+  for (let i = 0; i < data.lines.length; i += ROWS_PER_PAGE) {
+    pages.push(data.lines.slice(i, i + ROWS_PER_PAGE))
+  }
+  if (pages.length === 0) pages.push([])
+  const lastPageLines = pages[pages.length - 1]
+  const emptyRows = lastPageLines.length < ROWS_PER_PAGE ? ROWS_PER_PAGE - lastPageLines.length : 0
 
   return (
     <>
       <style>{`
         @media print {
-          @page { size: 5.5in 8.5in; margin: 0; }
+          @page { size: 5.83in 8.27in; margin: 1.5in 0 0 0; }
           body { margin: 0; padding: 0; }
           .no-print { display: none !important; }
           .bill-page {
-            width: 5.5in !important; min-height: 8.5in !important;
+            width: 5.83in !important;
             max-width: none !important; padding: 0 !important;
             margin: 0 !important; border: none !important;
             border-radius: 0 !important; box-shadow: none !important;
           }
+          .bill-table tr { page-break-inside: avoid; }
+          .bill-footer-table { page-break-inside: avoid; }
+          .signature-line { page-break-inside: avoid; }
         }
         .bill-page-wrapper {
           transform: scale(1.4); transform-origin: top center;
@@ -83,40 +94,28 @@ export function BillPrintPage() {
         }
         @media print { .bill-page-wrapper { transform: none !important; margin-bottom: 0 !important; } }
         .bill-page {
-          width: 5.5in; min-height: 8.5in; margin: 0 auto;
+          width: 5.83in; margin: 0 auto;
           background: white; color: black;
           font-family: 'Noto Sans Bengali', 'Kalpurush', system-ui, sans-serif;
           box-shadow: 0 0 10px rgba(0,0,0,0.1);
-          display: flex; flex-direction: column;
         }
         .bill-page * { color: black; }
-        .bill-header {
-          background: linear-gradient(135deg, #0d7377, #14919b);
-          color: white !important; padding: 12px 16px 10px;
-          text-align: center; position: relative;
+        .bill-header-spacer {
+          height: 1.5in;
         }
-        .bill-header * { color: white !important; }
-        .bill-header h1 { font-size: 20px; font-weight: 700; margin: 0 0 2px; letter-spacing: 0.5px; }
-        .bill-header .subtitle { font-size: 10px; margin: 0 0 3px; opacity: 0.9; }
-        .bill-header .address { font-size: 9.5px; margin: 0 0 2px; opacity: 0.85; }
-        .bill-header .mobile { font-size: 11px; font-weight: 600; margin: 0; }
-        .bill-number {
-          position: absolute; top: 10px; left: 14px;
-          font-size: 14px; font-weight: 700; color: #fcd34d !important;
+        @media print { .bill-header-spacer { display: none; } }
+        .bill-number-row {
+          display: flex; justify-content: flex-end;
+          padding: 0 1in; font-size: 13px; font-weight: 700;
+          margin-bottom: 4px;
         }
-        .memo-badge {
-          position: absolute; bottom: -1px; left: 14px;
-          background: #dc2626; color: white !important;
-          font-size: 11px; font-weight: 700; padding: 2px 10px;
-          border-radius: 4px 4px 0 0;
-        }
-        .bill-body { padding: 14px 16px 8px; flex: 1; display: flex; flex-direction: column; }
+        .bill-body { padding: 4px 1in 8px; }
         .bill-date { text-align: right; font-size: 11px; margin-bottom: 8px; }
         .customer-info { font-size: 11.5px; margin-bottom: 10px; line-height: 1.6; }
         .customer-info .label { font-weight: 400; }
         .customer-info .dots { flex: 1; border-bottom: 1px dotted #999; margin: 0 4px; min-width: 20px; }
         .customer-info .value { font-weight: 600; }
-        .bill-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: auto; }
+        .bill-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 0; }
         .bill-table th {
           border: 1px solid #444; padding: 4px 5px; font-weight: 700;
           text-align: center; background: #f5f5f0;
@@ -141,100 +140,115 @@ export function BillPrintPage() {
         }
       `}</style>
 
-      <div className="no-print flex items-center justify-between p-4 max-w-[5.5in] mx-auto mb-2">
+      <div className="no-print flex items-center justify-between p-4 max-w-[5.83in] mx-auto mb-2">
         <Button variant="outline" onClick={() => navigate('/bills')}>Back to Bills</Button>
         <Button onClick={() => window.print()}>Print Again</Button>
       </div>
 
       <div className="bill-page-wrapper">
-      <div className="bill-page">
-        {/* Teal Header */}
-        <div className="bill-header">
-          <div className="bill-number">{data.invoice_number}</div>
-          <h1>নুকতা অফসেট প্রেস এন্ড পেপার হাউজ</h1>
-          <p className="subtitle">দেশী-বিদেশী কাগজ বিক্রয় ও প্রিন্টিং কাজের অর্ডার নেওয়া হয়।</p>
-          <p className="address">হক সুপার মার্কেট, চিটাগারোড, সিদ্ধিরগঞ্জ, নারায়ণগঞ্জ।</p>
-          <p className="mobile">মোবাইল ঃ ০১৮১৯-১৫৩৩৮০</p>
-          <div className="memo-badge">ক্যাশ মেমো</div>
-        </div>
+      {pages.map((pageLines, pageIdx) => {
+        const isFirst = pageIdx === 0
+        const isLast = pageIdx === pages.length - 1
+        const pageEmptyRows = isLast ? emptyRows : 0
 
-        <div className="bill-body">
-          {/* Date */}
-          <div className="bill-date">তারিখ ঃ {formatDateBN(data.bill_date)}</div>
+        return (
+          <div key={pageIdx} className="bill-page" style={!isLast ? { pageBreakAfter: 'always' } : undefined}>
+            {/* Spacer for pre-printed letterhead (screen preview only, print uses @page margin) */}
+            <div className="bill-header-spacer" />
 
-          {/* Customer Info */}
-          <div className="customer-info">
-            <div style={{ display: 'flex', alignItems: 'baseline' }}>
-              <span className="label">প্রতিষ্ঠানের নাম ঃ</span>
-              <span className="dots" />
-              <span className="value">{data.customer_display}</span>
+            {isFirst && (
+              <>
+                <div className="bill-number-row">{data.invoice_number}</div>
+                <div className="bill-body">
+                  <div className="bill-date">তারিখ ঃ {formatDateBN(data.bill_date)}</div>
+                  <div className="customer-info">
+                    <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                      <span className="label">প্রতিষ্ঠানের নাম ঃ</span>
+                      <span className="dots" />
+                      <span className="value">{data.customer_display}</span>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {!isFirst && (
+              <div className="bill-body">
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', marginBottom: '6px', color: '#666' }}>
+                  <span>{data.invoice_number}</span>
+                  <span>পৃষ্ঠা {pageIdx + 1}/{pages.length}</span>
+                </div>
+              </div>
+            )}
+
+            <div style={{ padding: '0 1in' }}>
+              <table className="bill-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: '18%' }}>সাইজ</th>
+                    <th>বিবরণ</th>
+                    <th style={{ width: '14%' }}>পরিমাণ</th>
+                    <th style={{ width: '14%' }}>দর</th>
+                    <th style={{ width: '16%' }}>টাকা</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageLines.map((line, i) => {
+                    const size = (line.cut_width_inches && line.cut_height_inches)
+                      ? formatSize(line.cut_width_inches, line.cut_height_inches) : '—'
+                    return (
+                      <tr key={i}>
+                        <td className="text-c">{size}</td>
+                        <td>{line.label || 'Item'}</td>
+                        <td className="text-r">{line.quantity_pieces.toLocaleString()}</td>
+                        <td className="text-r">{formatTaka(line.selling_price_per_piece_poisha)}</td>
+                        <td className="text-r">{formatTaka(line.line_total_poisha)}</td>
+                      </tr>
+                    )
+                  })}
+                  {Array.from({ length: pageEmptyRows }).map((_, i) => (
+                    <tr key={`empty-${i}`}>
+                      <td>&nbsp;</td><td></td><td></td><td></td><td></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {isLast && (
+                <>
+                  <table className="bill-footer-table">
+                    <tbody>
+                      <tr>
+                        <td colSpan={3} rowSpan={5} style={{ border: '1px solid #888', verticalAlign: 'top', fontSize: '10px', color: '#666' }}></td>
+                        <td className="label-cell" style={{ border: '1px solid #888' }}>মোট</td>
+                        <td className="amount-cell" style={{ border: '1px solid #888', width: '16%' }}>{formatTaka(data.bill_total)}</td>
+                      </tr>
+                      <tr>
+                        <td className="label-cell" style={{ border: '1px solid #888' }}>সাবেক</td>
+                        <td className="amount-cell" style={{ border: '1px solid #888' }}>{data.outstanding > 0 ? formatTaka(data.outstanding) : '—'}</td>
+                      </tr>
+                      <tr>
+                        <td className="label-cell" style={{ border: '1px solid #888' }}>সর্বমোট</td>
+                        <td className="amount-cell" style={{ border: '1px solid #888', fontWeight: 700 }}>{formatTaka(data.grand_total)}</td>
+                      </tr>
+                      <tr>
+                        <td className="label-cell" style={{ border: '1px solid #888' }}>জমা</td>
+                        <td className="amount-cell" style={{ border: '1px solid #888' }}>{data.paying_now > 0 ? formatTaka(data.paying_now) : '—'}</td>
+                      </tr>
+                      <tr>
+                        <td className="label-cell" style={{ border: '1px solid #888' }}>বাকী</td>
+                        <td className="amount-cell" style={{ border: '1px solid #888', fontWeight: 700 }}>{formatTaka(Math.max(0, data.remaining))}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  <div className="signature-line">স্বাক্ষর</div>
+                </>
+              )}
             </div>
           </div>
-
-          {/* Items Table */}
-          <table className="bill-table">
-            <thead>
-              <tr>
-                <th style={{ width: '18%' }}>সাইজ</th>
-                <th>বিবরণ</th>
-                <th style={{ width: '14%' }}>পরিমাণ</th>
-                <th style={{ width: '14%' }}>দর</th>
-                <th style={{ width: '16%' }}>টাকা</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.lines.map((line, i) => {
-                const size = (line.cut_width_inches && line.cut_height_inches)
-                  ? formatSize(line.cut_width_inches, line.cut_height_inches) : '—'
-                return (
-                  <tr key={i}>
-                    <td className="text-c">{size}</td>
-                    <td>{line.label || 'Item'}</td>
-                    <td className="text-r">{line.quantity_pieces.toLocaleString()}</td>
-                    <td className="text-r">{formatTaka(line.selling_price_per_piece_poisha)}</td>
-                    <td className="text-r">{formatTaka(line.line_total_poisha)}</td>
-                  </tr>
-                )
-              })}
-              {/* Empty rows to fill the table */}
-              {Array.from({ length: emptyRows }).map((_, i) => (
-                <tr key={`empty-${i}`}>
-                  <td>&nbsp;</td><td></td><td></td><td></td><td></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {/* Footer totals */}
-          <table className="bill-footer-table">
-            <tbody>
-              <tr>
-                <td colSpan={3} rowSpan={5} style={{ border: '1px solid #888', verticalAlign: 'top', fontSize: '10px', color: '#666' }}></td>
-                <td className="label-cell" style={{ border: '1px solid #888' }}>মোট</td>
-                <td className="amount-cell" style={{ border: '1px solid #888', width: '16%' }}>{formatTaka(data.bill_total)}</td>
-              </tr>
-              <tr>
-                <td className="label-cell" style={{ border: '1px solid #888' }}>সাবেক</td>
-                <td className="amount-cell" style={{ border: '1px solid #888' }}>{data.outstanding > 0 ? formatTaka(data.outstanding) : '—'}</td>
-              </tr>
-              <tr>
-                <td className="label-cell" style={{ border: '1px solid #888' }}>সর্বমোট</td>
-                <td className="amount-cell" style={{ border: '1px solid #888', fontWeight: 700 }}>{formatTaka(data.grand_total)}</td>
-              </tr>
-              <tr>
-                <td className="label-cell" style={{ border: '1px solid #888' }}>জমা</td>
-                <td className="amount-cell" style={{ border: '1px solid #888' }}>{data.paying_now > 0 ? formatTaka(data.paying_now) : '—'}</td>
-              </tr>
-              <tr>
-                <td className="label-cell" style={{ border: '1px solid #888' }}>বাকী</td>
-                <td className="amount-cell" style={{ border: '1px solid #888', fontWeight: 700 }}>{formatTaka(Math.max(0, data.remaining))}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <div className="signature-line">স্বাক্ষর</div>
-        </div>
-      </div>
+        )
+      })}
       </div>
     </>
   )

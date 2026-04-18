@@ -78,6 +78,14 @@
   font-family: "JetBrains Mono", "Fira Code", monospace;
 }
 
+/* Print: hide sidebar, remove overflow constraints so content flows across pages */
+@media print {
+  * { overflow: visible !important; }
+  html, body { height: auto !important; margin: 0 !important; padding: 0 !important; background: white !important; }
+  .print-hide, .no-print { display: none !important; }
+  .print-main { padding: 0 !important; height: auto !important; }
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
