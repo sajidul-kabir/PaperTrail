@@ -205,6 +205,13 @@ export function PurchasesPage() {
       if (l.id !== id) return l
       const next = { ...l, ...patch }
       if ('category' in patch) { next.brandId = ''; next.gsmId = ''; next.proportionId = ''; next.accessoryId = ''; next.paperSubtype = ''; next.variant = ''; next.variantFilter = ''; next.variantTab = '' }
+      if ('brandId' in patch && patch.brandId) {
+        const brand = brands.find(b => b.id === patch.brandId)
+        if (brand && /a4/i.test(brand.name)) {
+          const a4 = proportions.find(p => Math.min(p.width_inches, p.height_inches) === 8.25 && Math.max(p.width_inches, p.height_inches) === 11.75)
+          if (a4) next.proportionId = a4.id
+        }
+      }
       if ('paperSubtype' in patch) {
         next.variant = ''; next.variantFilter = ''; next.variantTab = ''
         // Auto-set GSM + size defaults for carbon/color paper

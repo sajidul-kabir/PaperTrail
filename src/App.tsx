@@ -31,10 +31,10 @@ export default function App() {
         <Route path="/suppliers" element={<SuppliersPage />} />
         <Route path="/purchases" element={<PurchasesPage />} />
         <Route path="/godown" element={<GodownPage />} />
-        <Route path="/transfers" element={<TransfersPage />} />
-        <Route path="/transfers/new" element={<NewTransferPage />} />
+        {/* <Route path="/transfers" element={<TransfersPage />} /> */}
+        {/* <Route path="/transfers/new" element={<NewTransferPage />} /> */}
         <Route path="/transfers/receipt" element={<TransferReceiptPage />} />
-        <Route path="/cutting-stock" element={<CuttingInventoryPage />} />
+        {/* <Route path="/cutting-stock" element={<CuttingInventoryPage />} /> */}
         <Route path="/orders" element={<OrdersPage />} />
         <Route path="/orders/new" element={<NewOrderPage />} />
         <Route path="/orders/:id" element={<OrderDetailPage />} />

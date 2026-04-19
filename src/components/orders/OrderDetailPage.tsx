@@ -20,7 +20,8 @@ interface OrderHeader {
 
 interface OrderLineRow {
   id: string; label: string; cut_width_inches: number | null; cut_height_inches: number | null
-  quantity_pieces: number; selling_price_per_piece_poisha: number; line_total_poisha: number
+  quantity_pieces: number; quantity_sheets: number
+  selling_price_per_piece_poisha: number; line_total_poisha: number
   cost_per_piece_poisha: number; cost_total_poisha: number; profit_poisha: number; profit_margin_pct: number
   paper_type_id: string | null; accessory_id: string | null
 }
@@ -32,7 +33,8 @@ const ORDER_SQL = `
 
 const LINES_SQL = `
   SELECT ol.id, COALESCE(ol.label, 'Unknown') as label, ol.cut_width_inches, ol.cut_height_inches,
-    ol.quantity_pieces, ol.selling_price_per_piece_poisha, ol.line_total_poisha,
+    ol.quantity_pieces, COALESCE(ol.quantity_sheets, 0) as quantity_sheets,
+    ol.selling_price_per_piece_poisha, ol.line_total_poisha,
     ol.cost_per_piece_poisha, ol.cost_total_poisha, ol.profit_poisha, ol.profit_margin_pct,
     ol.paper_type_id, ol.accessory_id
   FROM order_lines ol WHERE ol.order_id = ? ORDER BY ol.ROWID ASC
@@ -61,15 +63,28 @@ export function OrderDetailPage() {
     try {
       const statements: { sql: string; params: any[] }[] = [
         { sql: `UPDATE orders SET status = 'VOID' WHERE id = ?`, params: [order.id] },
-        // Restore cutting_stock for each line
-        ...lines.map(line => ({
-          sql: `INSERT INTO cutting_stock (id, paper_type_id, accessory_id, cut_width_inches, cut_height_inches, quantity_pieces, transaction_type, reference_id, cost_per_piece_poisha, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, 'VOID_REVERSAL', ?, ?, datetime('now'))`,
-          params: [uuid(), line.paper_type_id, line.accessory_id, line.cut_width_inches, line.cut_height_inches, line.quantity_pieces, order.id, line.cost_per_piece_poisha],
-        })),
       ]
+
+      for (const line of lines) {
+        if (line.quantity_sheets > 0) {
+          // New-era order: restore sheets to godown stock_ledger
+          statements.push({
+            sql: `INSERT INTO stock_ledger (id, paper_type_id, accessory_id, transaction_type, quantity_sheets, reference_id, created_at)
+                  VALUES (?, ?, ?, 'VOID_REVERSAL', ?, ?, datetime('now'))`,
+            params: [uuid(), line.paper_type_id, line.accessory_id, line.quantity_sheets, order.id],
+          })
+        } else {
+          // Legacy order (cutting_stock era): restore pieces to cutting_stock
+          statements.push({
+            sql: `INSERT INTO cutting_stock (id, paper_type_id, accessory_id, cut_width_inches, cut_height_inches, quantity_pieces, transaction_type, reference_id, cost_per_piece_poisha, created_at)
+                  VALUES (?, ?, ?, ?, ?, ?, 'VOID_REVERSAL', ?, ?, datetime('now'))`,
+            params: [uuid(), line.paper_type_id, line.accessory_id, line.cut_width_inches, line.cut_height_inches, line.quantity_pieces, order.id, line.cost_per_piece_poisha],
+          })
+        }
+      }
+
       await dbTransaction(statements)
-      addToast({ title: 'Order voided', description: 'Stock has been restored to cutting inventory.' })
+      addToast({ title: 'Order voided', description: 'Stock has been restored.' })
       setDialogOpen(false); setVoidReason(''); refetchHeader(); refetchLines()
     } catch (err: any) {
       addToast({ title: 'Void failed', description: err.message, variant: 'destructive' })
@@ -100,7 +115,7 @@ export function OrderDetailPage() {
             <DialogContent>
               <DialogHeader><DialogTitle>Void Order</DialogTitle></DialogHeader>
               <div className="flex flex-col gap-3 pt-2">
-                <p className="text-sm text-muted-foreground">Voiding will restore all items to cutting stock.</p>
+                <p className="text-sm text-muted-foreground">Voiding will restore stock.</p>
                 <div className="flex flex-col gap-1.5">
                   <Label>Reason</Label>
                   <Input placeholder="Enter reason..." value={voidReason} onChange={e => setVoidReason(e.target.value)} />
@@ -152,9 +167,9 @@ export function OrderDetailPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Item</TableHead>
-                <TableHead>Cut Size</TableHead>
-                <TableHead className="text-right">Qty</TableHead>
-                <TableHead className="text-right">Rate/pc</TableHead>
+                <TableHead>Size</TableHead>
+                <TableHead className="text-right">Sheets</TableHead>
+                <TableHead className="text-right">Pieces</TableHead>
                 <TableHead className="text-right">Total</TableHead>
                 <TableHead className="text-right">Cost</TableHead>
                 <TableHead className="text-right">Profit</TableHead>
@@ -168,8 +183,9 @@ export function OrderDetailPage() {
                   <TableCell className="tabular-nums text-xs text-muted-foreground">
                     {line.cut_width_inches && line.cut_height_inches ? `${Math.min(line.cut_width_inches, line.cut_height_inches)}x${Math.max(line.cut_width_inches, line.cut_height_inches)}` : '—'}
                   </TableCell>
+
+                  <TableCell className="text-right tabular-nums">{line.quantity_sheets > 0 ? formatNumber(line.quantity_sheets) : '—'}</TableCell>
                   <TableCell className="text-right tabular-nums">{formatNumber(line.quantity_pieces)}</TableCell>
-                  <TableCell className="text-right tabular-nums text-xs">{formatBDT(Math.round(line.selling_price_per_piece_poisha))}</TableCell>
                   <TableCell className="text-right tabular-nums font-medium">{formatBDT(line.line_total_poisha)}</TableCell>
                   <TableCell className="text-right tabular-nums text-xs text-muted-foreground">{formatBDT(line.cost_total_poisha)}</TableCell>
                   <TableCell className={`text-right tabular-nums text-xs font-medium ${isVoid ? 'text-muted-foreground' : profitColor(line.profit_margin_pct)}`}>{formatBDT(line.profit_poisha)}</TableCell>

@@ -181,14 +181,14 @@ export function MemoPage() {
           <h1>নুকতা অফসেট প্রেস এন্ড পেপার হাউজ</h1>
           <p className="sub">দেশী-বিদেশী কাগজ বিক্রয় ও প্রিন্টিং কাজের অর্ডার নেওয়া হয়।</p>
           <p className="addr">হক সুপার মার্কেট, চিটাগারোড, সিদ্ধিরগঞ্জ, নারায়ণগঞ্জ।</p>
-          <p className="mob">মোবাইল ঃ ০১৮১৯-১৫৩৩৮০</p>
+          <p className="mob">মোবাইল :০১৮১৯-১৫৩৩৮০</p>
           <div className="mbadge">ক্যাশ মেমো</div>
         </div>
 
         <div className="memo-body">
-          <div style={{ textAlign: 'right', fontSize: '11px', marginBottom: '6px' }}>তারিখ ঃ {formatDateBN(memo.bill_date)}</div>
+          <div style={{ textAlign: 'right', fontSize: '11px', marginBottom: '6px' }}>তারিখ :{formatDateBN(memo.bill_date)}</div>
           <div style={{ fontSize: '11px', marginBottom: '8px', display: 'flex', alignItems: 'baseline' }}>
-            <span>প্রতিষ্ঠানের নাম ঃ</span>
+            <span>প্রতিষ্ঠানের নাম :</span>
             <span style={{ flex: 1, borderBottom: '1px dotted #999', margin: '0 4px' }} />
             <span style={{ fontWeight: 600 }}>{customerDisplay}</span>
           </div>

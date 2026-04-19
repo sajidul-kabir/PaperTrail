@@ -27,8 +27,8 @@ const navItems = [
   { to: '/suppliers', icon: Truck, tKey: 'nav.suppliers' as const },
   { to: '/purchases', icon: ShoppingCart, tKey: 'nav.purchases' as const },
   { to: '/godown', icon: Warehouse, tKey: 'nav.godown' as const },
-  { to: '/transfers', icon: ArrowRightLeft, tKey: 'nav.transfers' as const },
-  { to: '/cutting-stock', icon: Scissors, tKey: 'nav.cuttingStock' as const },
+  // { to: '/transfers', icon: ArrowRightLeft, tKey: 'nav.transfers' as const },
+  // { to: '/cutting-stock', icon: Scissors, tKey: 'nav.cuttingStock' as const },
   { to: '/orders', icon: ClipboardList, tKey: 'nav.orders' as const },
   { to: '/bills', icon: Receipt, tKey: 'nav.bills' as const },
   { to: '/customers', icon: Users, tKey: 'nav.customers' as const },
@@ -46,7 +46,7 @@ export function Sidebar() {
   }, [dark])
 
   return (
-    <aside className="w-52 border-r bg-card flex flex-col shrink-0">
+    <aside className="w-52 h-full border-r bg-card flex flex-col shrink-0">
       <div className="h-12 flex items-center justify-between px-4 border-b">
         <h1 className="text-base font-bold text-primary tracking-tight">PaperTrail</h1>
         <div className="flex items-center gap-1">

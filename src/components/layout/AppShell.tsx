@@ -12,7 +12,7 @@ export function AppShell() {
 
   return (
     <div className="flex h-screen overflow-hidden print:h-auto print:overflow-visible print:block">
-      <div className="print-hide"><Sidebar /></div>
+      <div className="print-hide h-full"><Sidebar /></div>
       <main ref={mainRef} className="flex-1 overflow-auto p-6 outline-none print-main" tabIndex={-1}>
         <Outlet />
       </main>

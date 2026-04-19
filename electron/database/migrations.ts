@@ -504,6 +504,18 @@ const migrations: { version: number; sql: string }[] = [
       UPDATE gsm_options SET unit = 'lb' WHERE category = 'ACCESSORY';
     `,
   },
+  {
+    version: 11,
+    sql: `
+      ALTER TABLE order_lines ADD COLUMN quantity_sheets INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    version: 12,
+    sql: `
+      ALTER TABLE customers ADD COLUMN previous_balance_poisha INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ]
 
 export function runMigrations(db: Database.Database) {

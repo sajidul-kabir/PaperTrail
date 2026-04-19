@@ -158,12 +158,14 @@ export function BillPrintPage() {
 
             {isFirst && (
               <>
-                <div className="bill-number-row">{data.invoice_number}</div>
                 <div className="bill-body">
-                  <div className="bill-date">তারিখ ঃ {formatDateBN(data.bill_date)}</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: '13px', marginBottom: '8px' }}>
+                    <span style={{ fontWeight: 700 }}>{data.invoice_number}</span>
+                    <span style={{ fontSize: '11px' }}>তারিখ :{formatDateBN(data.bill_date)}</span>
+                  </div>
                   <div className="customer-info">
                     <div style={{ display: 'flex', alignItems: 'baseline' }}>
-                      <span className="label">প্রতিষ্ঠানের নাম ঃ</span>
+                      <span className="label">প্রতিষ্ঠানের নাম :</span>
                       <span className="dots" />
                       <span className="value">{data.customer_display}</span>
                     </div>

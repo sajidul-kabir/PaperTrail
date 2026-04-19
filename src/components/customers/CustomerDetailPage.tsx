@@ -69,6 +69,7 @@ export function CustomerDetailPage() {
     refetch: refetchCustomer,
   } = useQuery<CustomerDetail>(
     `SELECT c.*,
+       COALESCE(c.previous_balance_poisha, 0) +
        COALESCE((SELECT SUM(total_poisha) FROM invoices WHERE customer_id = c.id AND status = 'ACTIVE'), 0) -
        COALESCE((SELECT SUM(amount_poisha) FROM payments WHERE customer_id = c.id), 0) as balance_poisha
      FROM customers c
@@ -267,7 +268,7 @@ export function CustomerDetailPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Order #</TableHead>
+                      <TableHead>Bill #</TableHead>
                       <TableHead>Date</TableHead>
                       <TableHead className="text-right">Total</TableHead>
                       <TableHead>Status</TableHead>
