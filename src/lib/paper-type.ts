@@ -29,11 +29,12 @@ export function isPerPieceCategory(category: Category): boolean {
   return category !== 'PAPER'
 }
 
-/** Paper sub-type options (Regular / Carbon / Color) */
+/** Paper sub-type options (Regular / Carbon / Color / Packet) */
 export const PAPER_SUBTYPES = [
   { value: '', label: 'Regular' },
   { value: 'carbon', label: 'Carbon' },
   { value: 'color', label: 'Color' },
+  { value: 'packet', label: 'Packet' },
 ] as const
 
 /** Variant presets for each paper sub-type */
@@ -44,11 +45,18 @@ export const VARIANT_PRESETS: Record<string, string[]> = {
     'CF White', 'CF Blue', 'CF Yellow', 'CF Pink', 'CF Green',
   ],
   color: ['Blue', 'Yellow', 'Pink', 'Green'],
+  packet: [],
+}
+
+/** Check if a variant represents a packet sub-type */
+export function isPacketVariant(variant: string): boolean {
+  return variant === 'PACKET' || variant === 'Packet' || variant === 'packet'
 }
 
 /** Derive display type from variant string */
 export function paperDisplayType(variant: string): string {
   if (!variant) return 'Paper'
+  if (isPacketVariant(variant)) return 'Packet Paper'
   const v = variant.toUpperCase()
   if (v.startsWith('CB ') || v.startsWith('CFB ') || v.startsWith('CF ')) return 'Carbon Paper'
   return 'Color Paper'

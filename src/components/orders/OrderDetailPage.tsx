@@ -65,6 +65,14 @@ export function OrderDetailPage() {
         { sql: `UPDATE orders SET status = 'VOID' WHERE id = ?`, params: [order.id] },
       ]
 
+      // If billed, also void the invoice
+      if (order.status === 'BILLED' && order.invoice_id) {
+        statements.push({
+          sql: `UPDATE invoices SET status = 'VOID', void_reason = ?, voided_at = datetime('now') WHERE id = ?`,
+          params: [voidReason.trim(), order.invoice_id],
+        })
+      }
+
       for (const line of lines) {
         if (line.quantity_sheets > 0) {
           // New-era order: restore sheets to godown stock_ledger
@@ -109,13 +117,15 @@ export function OrderDetailPage() {
           <h1 className="text-lg font-semibold">Order Detail</h1>
           <Badge variant={order.status === 'PENDING' ? 'secondary' : order.status === 'BILLED' ? 'default' : 'destructive'} className="text-[10px] px-1.5 py-0">{order.status}</Badge>
         </div>
-        {order.status === 'PENDING' && (
+        {(order.status === 'PENDING' || order.status === 'BILLED') && (
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild><Button variant="destructive" size="sm">Void Order</Button></DialogTrigger>
             <DialogContent>
               <DialogHeader><DialogTitle>Void Order</DialogTitle></DialogHeader>
               <div className="flex flex-col gap-3 pt-2">
-                <p className="text-sm text-muted-foreground">Voiding will restore stock.</p>
+                <p className="text-sm text-muted-foreground">
+                  Voiding will restore stock to godown.{order.status === 'BILLED' && ' The associated bill will also be voided.'}
+                </p>
                 <div className="flex flex-col gap-1.5">
                   <Label>Reason</Label>
                   <Input placeholder="Enter reason..." value={voidReason} onChange={e => setVoidReason(e.target.value)} />

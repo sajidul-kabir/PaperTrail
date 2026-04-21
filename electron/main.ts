@@ -39,6 +39,13 @@ function createWindow() {
     },
   })
 
+  // Open DevTools with F12 or Ctrl+Shift+I
+  win.webContents.on('before-input-event', (_e, input) => {
+    if (input.key === 'F12' || (input.control && input.shift && input.key === 'I')) {
+      win?.webContents.toggleDevTools()
+    }
+  })
+
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL)
   } else {

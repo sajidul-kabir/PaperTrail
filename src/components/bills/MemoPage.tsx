@@ -5,7 +5,7 @@ import { dbQuery, dbTransaction } from '@/lib/ipc'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
-import { formatSize, bdtToPoisha } from '@/lib/utils'
+import { formatSize, bdtToPoisha, billSize, billLabel } from '@/lib/utils'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -206,11 +206,11 @@ export function MemoPage() {
             <tbody>
               {memo.lines.map((line, i) => {
                 const size = (line.cut_width_inches && line.cut_height_inches)
-                  ? formatSize(line.cut_width_inches, line.cut_height_inches) : '—'
+                  ? billSize(line.cut_width_inches, line.cut_height_inches) : '—'
                 return (
                   <tr key={i}>
                     <td className="c">{size}</td>
-                    <td>{line.label || 'Item'}</td>
+                    <td>{billLabel(line.label)}</td>
                     <td className="r">{line.quantity_pieces.toLocaleString()}</td>
                     <td className="r">{formatTaka(line.selling_price_per_piece_poisha)}</td>
                     <td className="r">{formatTaka(line.line_total_poisha)}</td>

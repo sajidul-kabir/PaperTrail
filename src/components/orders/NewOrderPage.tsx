@@ -12,7 +12,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
 import { piecesPerSheet } from '@/lib/calculations'
-import { paperDisplayType } from '@/lib/paper-type'
+import { paperDisplayType, isPacketVariant } from '@/lib/paper-type'
 import type { Category } from '@/lib/paper-type'
 import { formatBDT, formatNumber, todayISO, bdtToPoisha, profitColor, paperTypeLabel, poishaToBdt } from '@/lib/utils'
 
@@ -37,7 +37,7 @@ interface AccessoryItem {
   total_pieces: number
 }
 
-interface CostRow { paper_type_id: string; avg_cost_per_sheet_poisha: number }
+interface CostRow { paper_type_id: string; avg_cost_per_sheet_poisha: number; avg_cost_per_ream_poisha: number; category: string }
 interface AccessoryCostRow { accessory_id: string; avg_cost_poisha: number }
 
 interface LineItem {
@@ -47,6 +47,7 @@ interface LineItem {
   quantity_pieces: string
   cut_size: string
   sheetsOverride: string
+  cuttingFee: string
   selling_price: string
   totalOverride: string
   itemFilter: string
@@ -88,12 +89,16 @@ const ACCESSORY_GODOWN_SQL = `
 `
 
 const COSTS_SQL = `
-  SELECT pu.paper_type_id,
+  SELECT pu.paper_type_id, pt.category,
     CASE WHEN SUM(pu.quantity_reams) > 0
       THEN SUM(pu.cost_per_ream_poisha * pu.quantity_reams) / SUM(pu.quantity_reams)
            / CASE WHEN pt.category IN ('CARD','STICKER') THEN 100 ELSE 500 END
       ELSE 0
-    END AS avg_cost_per_sheet_poisha
+    END AS avg_cost_per_sheet_poisha,
+    CASE WHEN SUM(pu.quantity_reams) > 0
+      THEN SUM(pu.cost_per_ream_poisha * pu.quantity_reams) / SUM(pu.quantity_reams)
+      ELSE 0
+    END AS avg_cost_per_ream_poisha
   FROM purchases pu
   JOIN paper_types pt ON pt.id = pu.paper_type_id
   WHERE pu.paper_type_id IS NOT NULL
@@ -118,7 +123,7 @@ const CUT_SIZE_PRESETS: Record<string, string[]> = {
   STICKER: [],
 }
 
-const CUTTING_FEE_POISHA = 2000 // ৳20 flat per line
+const DEFAULT_CUTTING_FEE = '20' // ৳20 default when adding cutting fee
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -127,7 +132,7 @@ function emptyLine(): LineItem {
     id: uuid(),
     paper_type_id: '', accessory_id: '',
     quantity_pieces: '', cut_size: '',
-    sheetsOverride: '', selling_price: '', totalOverride: '',
+    sheetsOverride: '', cuttingFee: '', selling_price: '', totalOverride: '',
     itemFilter: '', categoryFilter: '',
   }
 }
@@ -174,6 +179,8 @@ export function NewOrderPage() {
   const godownMap = new Map(godownItems.map(i => [i.paper_type_id, i]))
   const accMap = new Map(accessoryItems.map(a => [a.accessory_id, a]))
   const costMap = new Map(costRows.map(c => [c.paper_type_id, c.avg_cost_per_sheet_poisha]))
+  const reamCostMap = new Map(costRows.map(c => [c.paper_type_id, c.avg_cost_per_ream_poisha]))
+  const costCatMap = new Map(costRows.map(c => [c.paper_type_id, c.category]))
   const accCostMap = new Map(accCostRows.map(c => [c.accessory_id, c.avg_cost_poisha]))
 
   // Compute sheets consumed by a single line (for availability tracking)
@@ -212,7 +219,7 @@ export function NewOrderPage() {
       if ('paper_type_id' in patch && patch.paper_type_id) next.accessory_id = ''
       if ('accessory_id' in patch && patch.accessory_id) { next.paper_type_id = ''; next.cut_size = ''; next.sheetsOverride = '' }
       if ('cut_size' in patch) next.sheetsOverride = ''
-      if ('quantity_pieces' in patch || 'selling_price' in patch || 'cut_size' in patch || 'sheetsOverride' in patch) next.totalOverride = ''
+      if ('quantity_pieces' in patch || 'selling_price' in patch || 'cut_size' in patch || 'sheetsOverride' in patch || 'cuttingFee' in patch) next.totalOverride = ''
       return next
     }))
   }, [])
@@ -245,14 +252,37 @@ export function NewOrderPage() {
         lineTotal, costTotal, profit, margin, sheets,
         pps: 1, totalPieces, hasCut: false,
         costPerSheet: costPerPiece, availableSheets: available,
-        isAccessory: true, cutW: 0, cutH: 0,
+        isAccessory: true, isPacket: false, cutW: 0, cutH: 0,
         label: acc.accessory_name,
         paper_type_id: null as string | null, accessory_id: line.accessory_id,
       }
     }
 
     if (!item) return null
+    const isPacket = isPacketVariant(item.variant)
     const costPerSheet = costMap.get(line.paper_type_id) ?? 0
+
+    if (isPacket) {
+      // Packet: simple qty × price, no cut size, 1 packet = 1 stock unit
+      const sheets = totalPieces // packets = stock units
+      const rawTotal = totalPieces * pricePoisha
+      const lineTotal = line.totalOverride ? bdtToPoisha(parseNum(line.totalOverride)) : price > 0 ? Math.ceil(rawTotal / 100) * 100 : 0
+      const costPerPacket = reamCostMap.get(line.paper_type_id) ?? 0
+      const costTotal = Math.round(sheets * costPerPacket)
+      const profit = lineTotal - costTotal
+      const margin = lineTotal > 0 ? (profit / lineTotal) * 100 : 0
+      const available = item.total_sheets - usedByOtherLines(line.id, line.paper_type_id, '')
+      return {
+        lineTotal, costTotal, profit, margin, sheets,
+        pps: 1, totalPieces, hasCut: false,
+        costPerSheet, availableSheets: available,
+        isAccessory: false, isPacket: true,
+        cutW: Math.min(item.width_inches, item.height_inches),
+        cutH: Math.max(item.width_inches, item.height_inches),
+        label: itemLabel(item),
+        paper_type_id: line.paper_type_id as string | null, accessory_id: null as string | null,
+      }
+    }
 
     // Parse optional cut size; blank = full sheet (1 piece = 1 sheet)
     const parsed = line.cut_size.trim() ? parseCutSize(line.cut_size) : null
@@ -271,9 +301,12 @@ export function NewOrderPage() {
     const sheetsOvr = parseNum(line.sheetsOverride)
     const sheets = sheetsOvr > 0 ? sheetsOvr : Math.ceil(totalPieces / pps)
 
-    // Price is always per sheet for paper/card/sticker
-    const rawTotal = sheets * pricePoisha
-    const cuttingFee = hasCut ? CUTTING_FEE_POISHA : 0
+    // For PAPER: user enters price/ream, convert to per-sheet (500 sheets/ream)
+    // For CARD/STICKER: user enters price/sheet directly
+    const isPaper = item.category === 'PAPER'
+    const pricePerSheet = isPaper ? pricePoisha / 500 : pricePoisha
+    const rawTotal = sheets * pricePerSheet
+    const cuttingFee = line.cuttingFee ? bdtToPoisha(parseNum(line.cuttingFee)) : 0
     const lineTotal = line.totalOverride
       ? bdtToPoisha(parseNum(line.totalOverride))
       : price > 0 ? Math.ceil(rawTotal / 100) * 100 + cuttingFee : 0
@@ -286,7 +319,7 @@ export function NewOrderPage() {
       lineTotal, costTotal, profit, margin, sheets,
       pps, totalPieces, hasCut,
       costPerSheet, availableSheets: available,
-      isAccessory: false, cutW, cutH,
+      isAccessory: false, isPacket: false, cutW, cutH,
       label: itemLabel(item),
       paper_type_id: line.paper_type_id as string | null, accessory_id: null as string | null,
     }
@@ -413,6 +446,7 @@ export function NewOrderPage() {
         const selectedItem = line.paper_type_id ? godownMap.get(line.paper_type_id) : undefined
         const selectedAcc = line.accessory_id ? accMap.get(line.accessory_id) : undefined
         const isAcc = !!line.accessory_id
+        const isPacketItem = selectedItem ? isPacketVariant(selectedItem.variant) : false
         const cat: string = selectedItem ? selectedItem.category : isAcc ? 'ACCESSORY' : 'PAPER'
 
         const categoryTabs = ['', 'PAPER', 'CARD', 'STICKER', 'ACCESSORY'] as const
@@ -452,6 +486,17 @@ export function NewOrderPage() {
                       {isAcc ? selectedAcc?.accessory_name : (selectedItem ? itemLabel(selectedItem) : '')}
                     </span>
                     {!isAcc && selectedItem && (() => {
+                      if (isPacketItem) {
+                        const cpr = reamCostMap.get(line.paper_type_id) ?? 0
+                        if (cpr <= 0) return <span className="text-xs text-muted-foreground">(no cost)</span>
+                        return <span className="text-xs text-muted-foreground">(৳{(cpr / 100).toFixed(2)}/packet)</span>
+                      }
+                      const isPaper = selectedItem.category === 'PAPER'
+                      if (isPaper) {
+                        const cpr = reamCostMap.get(line.paper_type_id) ?? 0
+                        if (cpr <= 0) return <span className="text-xs text-muted-foreground">(no cost)</span>
+                        return <span className="text-xs text-muted-foreground">(৳{(cpr / 100).toFixed(2)}/ream)</span>
+                      }
                       const cps = costMap.get(line.paper_type_id) ?? 0
                       if (cps <= 0) return <span className="text-xs text-muted-foreground">(no cost)</span>
                       return <span className="text-xs text-muted-foreground">(৳{(cps / 100).toFixed(2)}/sheet)</span>
@@ -532,7 +577,7 @@ export function NewOrderPage() {
                 return (
                   <div className="text-xs text-muted-foreground mb-2">
                     Available: <span className={`font-semibold ${sheetsNeeded > adjusted && sheetsNeeded > 0 ? 'text-destructive' : 'text-foreground'}`}>
-                      {formatNumber(adjusted)} {isAcc ? 'pcs' : 'sheets'}
+                      {formatNumber(adjusted)} {isAcc ? 'pcs' : isPacketItem ? 'packets' : 'sheets'}
                     </span>
                     {adjusted < rawStock && (
                       <span className="text-muted-foreground ml-1">(of {formatNumber(rawStock)} in godown)</span>
@@ -545,15 +590,15 @@ export function NewOrderPage() {
               })()}
 
               {/* Inputs */}
-              {isAcc ? (
+              {isAcc || isPacketItem ? (
                 <div className="grid grid-cols-2 gap-3 mb-3">
                   <div className="flex flex-col gap-1">
-                    <Label className="text-xs">Qty (pieces)</Label>
+                    <Label className="text-xs">{isPacketItem ? 'Packets to sell' : 'Qty (pieces)'}</Label>
                     <Input className="h-9" type="number" min="0" step="1" value={line.quantity_pieces}
                       onChange={e => updateLine(line.id, { quantity_pieces: e.target.value })} />
                   </div>
                   <div className="flex flex-col gap-1">
-                    <Label className="text-xs">Price / piece (৳)</Label>
+                    <Label className="text-xs">{isPacketItem ? 'Price / packet (৳)' : 'Price / piece (৳)'}</Label>
                     <Input className="h-9" type="number" min="0" step="1" value={line.selling_price}
                       onChange={e => updateLine(line.id, { selling_price: e.target.value })} />
                   </div>
@@ -588,13 +633,13 @@ export function NewOrderPage() {
                         onChange={e => updateLine(line.id, { quantity_pieces: e.target.value })} />
                     </div>
                     <div className="flex flex-col gap-1">
-                      <Label className="text-xs">Price / sheet (৳)</Label>
+                      <Label className="text-xs">{cat === 'PAPER' ? 'Price / ream (৳)' : 'Price / sheet (৳)'}</Label>
                       <Input className="h-9" type="number" min="0" step="0.01" value={line.selling_price}
                         onChange={e => updateLine(line.id, { selling_price: e.target.value })} />
                     </div>
                   </div>
 
-                  {/* Sheets needed + cutting badge */}
+                  {/* Sheets needed + cutting fee */}
                   {r && (
                     <div className="flex items-center gap-4 mb-3 text-xs text-muted-foreground">
                       <span className="flex items-center gap-1">
@@ -604,10 +649,22 @@ export function NewOrderPage() {
                           value={line.sheetsOverride || String(r.sheets)}
                           onChange={e => updateLine(line.id, { sheetsOverride: e.target.value })} />
                       </span>
-                      {hasCut && (
-                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-orange-50 text-orange-700 dark:bg-orange-900 dark:text-orange-200">
-                          +৳20 cutting
-                        </Badge>
+                      {line.cuttingFee ? (
+                        <span className="flex items-center gap-1">
+                          +৳<Input className="h-6 w-12 text-center text-xs font-semibold p-0"
+                            type="number" min="0" step="1"
+                            value={line.cuttingFee}
+                            onChange={e => updateLine(line.id, { cuttingFee: e.target.value })} />
+                          cutting
+                          <button type="button" className="text-muted-foreground hover:text-destructive ml-0.5"
+                            onClick={() => updateLine(line.id, { cuttingFee: '' })}>×</button>
+                        </span>
+                      ) : (
+                        <button type="button"
+                          className="text-[10px] px-1.5 py-0.5 rounded border border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-100 dark:border-orange-700 dark:bg-orange-900 dark:text-orange-200"
+                          onClick={() => updateLine(line.id, { cuttingFee: DEFAULT_CUTTING_FEE })}>
+                          + Cutting Fee
+                        </button>
                       )}
                     </div>
                   )}

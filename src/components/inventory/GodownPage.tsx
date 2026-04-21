@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatBDT, formatNumber, paperTypeLabel, formatSize } from '@/lib/utils'
 import { cn } from '@/lib/utils'
-import { sheetsPerUnit, unitLabelPlural, paperDisplayType } from '@/lib/paper-type'
+import { sheetsPerUnit, unitLabelPlural, paperDisplayType, isPacketVariant } from '@/lib/paper-type'
 import type { Category } from '@/lib/paper-type'
 
 const LOW_STOCK_THRESHOLD = 5
@@ -150,7 +150,8 @@ export function GodownPage() {
   // Investment calculations — current godown stock value
   const paperInvestment = stockRows.reduce((sum, row) => {
     const cat = (row.category || 'PAPER') as Category
-    const spu = sheetsPerUnit(cat)
+    const isPacket = isPacketVariant(row.variant)
+    const spu = isPacket ? 1 : sheetsPerUnit(cat)
     const units = Number(row.total_sheets) / spu
     const avgCost = costMap.get(row.paper_type_id) ?? 0
     return sum + Math.round(avgCost * units)
@@ -168,7 +169,8 @@ export function GodownPage() {
   const categoryTotals = new Map<string, number>()
   for (const row of stockRows) {
     const cat = (row.category || 'PAPER') as Category
-    const spu = sheetsPerUnit(cat)
+    const isPacket = isPacketVariant(row.variant)
+    const spu = isPacket ? 1 : sheetsPerUnit(cat)
     const units = Number(row.total_sheets) / spu
     const avgCost = costMap.get(row.paper_type_id) ?? 0
     const value = Math.round(avgCost * units)
@@ -269,7 +271,8 @@ export function GodownPage() {
               )}
               {showPaperRows && filteredRows.map((row) => {
                 const cat = (row.category || 'PAPER') as Category
-                const spu = sheetsPerUnit(cat)
+                const isPacket = isPacketVariant(row.variant)
+                const spu = isPacket ? 1 : sheetsPerUnit(cat)
                 const totalSheets = Number(row.total_sheets)
                 const units = totalSheets / spu
                 const avgCostPoisha = costMap.get(row.paper_type_id) ?? 0
@@ -286,18 +289,21 @@ export function GodownPage() {
                         const displayType = cat === 'PAPER' ? paperDisplayType(row.variant) : cat
                         const isCarbon = displayType === 'Carbon Paper'
                         const isColor = displayType === 'Color Paper'
-                        return <Badge variant={cat === 'PAPER' && !isCarbon && !isColor ? 'secondary' : 'outline'} className={`text-[10px] px-1.5 py-0 ${cat === 'CARD' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' : cat === 'STICKER' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' : isCarbon ? 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200' : isColor ? 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200' : ''}`}>{displayType}</Badge>
+                        const isPacketType = displayType === 'Packet Paper'
+                        return <Badge variant={cat === 'PAPER' && !isCarbon && !isColor && !isPacketType ? 'secondary' : 'outline'} className={`text-[10px] px-1.5 py-0 ${cat === 'CARD' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' : cat === 'STICKER' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' : isCarbon ? 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200' : isColor ? 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200' : isPacketType ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200' : ''}`}>{displayType}</Badge>
                       })()}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {formatNumber(units, 1)} {unitLabelPlural(cat)}
+                      {isPacket ? `${formatNumber(totalSheets)} packets` : `${formatNumber(units, 1)} ${unitLabelPlural(cat)}`}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">{formatNumber(totalSheets)}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {isPacket ? <span className="text-muted-foreground">—</span> : formatNumber(totalSheets)}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {avgCostPoisha > 0 ? formatBDT(avgCostPoisha) : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {avgCostPoisha > 0 ? formatBDT(Math.round(avgCostPoisha / spu)) : <span className="text-muted-foreground">—</span>}
+                      {isPacket ? <span className="text-muted-foreground">—</span> : avgCostPoisha > 0 ? formatBDT(Math.round(avgCostPoisha / spu)) : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {avgCostPoisha > 0 ? formatBDT(totalValuePoisha) : <span className="text-muted-foreground">—</span>}

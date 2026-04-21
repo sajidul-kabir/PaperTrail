@@ -1,4 +1,5 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
+import { useLocation } from 'react-router-dom'
 import { dbQuery, dbTransaction } from '@/lib/ipc'
 import { findOrCreatePaperType, findOrCreateAccessory, sheetsPerUnit, unitLabel, unitLabelPlural, PAPER_SUBTYPES, VARIANT_PRESETS, paperDisplayType } from '@/lib/paper-type'
 import type { Category } from '@/lib/paper-type'
@@ -16,6 +17,8 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
 import { formatBDT, formatDate, bdtToPoisha, poishaToBdt, todayISO, formatSize } from '@/lib/utils'
+import { usePurchaseMinimize } from '@/lib/purchase-minimize'
+import { Minus } from 'lucide-react'
 
 // ─── SQL ──────────────────────────────────────────────────────────────────────
 
@@ -128,6 +131,8 @@ const VARIANT_TABS: Record<string, string[]> = {
 
 export function PurchasesPage() {
   const { addToast } = useToast()
+  const location = useLocation()
+  const { minimized: globalMinimized, minimize: globalMinimize, restore: globalRestore } = usePurchaseMinimize()
   const [open, setOpen] = useState(false)
   const [editingPurchase, setEditingPurchase] = useState<Purchase | null>(null)
   const [saving, setSaving] = useState(false)
@@ -158,6 +163,26 @@ export function PurchasesPage() {
   const { data: summaryRows, loading: summaryLoading, refetch: refetchSummary } = useQuery<SummaryRow>(SUMMARY_SQL, [today, getWeekStart(), getMonthStart()], [today])
   const summary = summaryRows[0] ?? { total_all: 0, total_today: 0, total_week: 0, total_month: 0, total_paper: 0, total_card: 0, total_sticker: 0, total_accessory: 0 }
 
+  // Restore minimized purchase when navigated here with restorePurchase state
+  useEffect(() => {
+    const state = location.state as any
+    if (state?.restorePurchase && globalMinimized) {
+      const data = globalRestore()
+      if (data?.formData) {
+        const f = data.formData
+        setPurchaseDate(f.purchaseDate ?? todayISO())
+        setSupplierId(f.supplierId ?? '')
+        setNotes(f.notes ?? '')
+        setLines(f.lines ?? [emptyLine()])
+        setExpandedLineId(f.expandedLineId ?? '')
+        setEditingPurchase(f.editingPurchase ?? null)
+        setOpen(true)
+      }
+      // Clear the navigation state so it doesn't re-trigger
+      window.history.replaceState({}, '')
+    }
+  }, [location.state])
+
   function resetForm() {
     setPurchaseDate(todayISO()); setSupplierId(''); setNotes('')
     const first = emptyLine()
@@ -175,7 +200,8 @@ export function PurchasesPage() {
     const editVariant = p.variant || ''
     let editSubtype = ''
     if (editVariant) {
-      if (VARIANT_PRESETS.carbon?.includes(editVariant)) editSubtype = 'carbon'
+      if (editVariant === 'PACKET' || editVariant === 'Packet' || editVariant === 'packet') editSubtype = 'packet'
+      else if (VARIANT_PRESETS.carbon?.includes(editVariant)) editSubtype = 'carbon'
       else if (VARIANT_PRESETS.color?.includes(editVariant)) editSubtype = 'color'
       else editSubtype = 'carbon' // fallback for unknown variants
     }
@@ -226,6 +252,9 @@ export function PurchasesPage() {
           const s18x23 = proportions.find(p => (Math.min(p.width_inches, p.height_inches) === 18 && Math.max(p.width_inches, p.height_inches) === 23))
           if (g42) next.gsmId = g42.id
           if (s18x23) next.proportionId = s18x23.id
+        } else if (st === 'packet') {
+          next.variant = 'PACKET'
+          next.extraSheets = ''
         }
       }
       return next
@@ -263,7 +292,7 @@ export function PurchasesPage() {
         // EDIT single purchase
         const line = lines[0]
         const cat = line.category
-        const spu = sheetsPerUnit(cat)
+        const spu = line.paperSubtype === 'packet' ? 1 : sheetsPerUnit(cat)
         let paperTypeId: string | null = null
         let accessoryId: string | null = null
 
@@ -291,7 +320,7 @@ export function PurchasesPage() {
 
         for (const line of lines) {
           const cat = line.category
-          const spu = sheetsPerUnit(cat)
+          const spu = line.paperSubtype === 'packet' ? 1 : sheetsPerUnit(cat)
           let paperTypeId: string | null = null
           let accessoryId: string | null = null
 
@@ -413,8 +442,22 @@ export function PurchasesPage() {
       </div>
 
       {/* ── Purchase Dialog ──────────────────────────────────────────────── */}
-      <Dialog open={open} onOpenChange={v => { setOpen(v); if (!v) resetForm() }}>
+      <Dialog open={open} onOpenChange={v => { if (!v) { setOpen(false); if (!globalMinimized) resetForm() } }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" onInteractOutside={e => e.preventDefault()}>
+          <button
+            type="button"
+            className="absolute right-11 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+            onClick={() => {
+              const label = editingPurchase ? 'Edit Purchase' : `Recording ${lines.length} Purchase${lines.length > 1 ? 's' : ''}`
+              globalMinimize(label, {
+                purchaseDate, supplierId, notes, lines, expandedLineId, editingPurchase,
+              })
+              setOpen(false)
+            }}
+            title="Minimize"
+          >
+            <Minus className="h-4 w-4" />
+          </button>
           <DialogHeader><DialogTitle>{editingPurchase ? 'Edit Purchase' : 'Record Purchases'}</DialogTitle></DialogHeader>
 
           <div className="grid gap-4 py-2">
@@ -444,10 +487,11 @@ export function PurchasesPage() {
 
             {lines.map((line, idx) => {
               const cat = line.category
-              const spu = sheetsPerUnit(cat)
-              const uLbl = unitLabel(cat)
-              const uLblP = unitLabelPlural(cat)
-              const qty = effectiveQty(line, spu)
+              const isPacket = line.paperSubtype === 'packet'
+              const spu = isPacket ? 1 : sheetsPerUnit(cat)
+              const uLbl = isPacket ? 'packet' : unitLabel(cat)
+              const uLblP = isPacket ? 'packets' : unitLabelPlural(cat)
+              const qty = isPacket ? (parseFloat(line.quantity) || 0) : effectiveQty(line, spu)
               const cost = parseFloat(line.costPerUnit) || 0
               const isExpanded = expandedLineId === line.id
 
@@ -611,12 +655,12 @@ export function PurchasesPage() {
                     )}
 
                     {/* Qty + Cost */}
-                    <div className={`grid gap-3 ${cat !== 'ACCESSORY' ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                    <div className={`grid gap-3 ${cat !== 'ACCESSORY' && !isPacket ? 'grid-cols-3' : 'grid-cols-2'}`}>
                       <div className="grid gap-1">
                         <Label className="text-xs">Qty ({uLblP})</Label>
                         <Input className="h-8" type="number" min="0" step="1" value={line.quantity} onChange={e => updateLine(line.id, { quantity: e.target.value })} />
                       </div>
-                      {cat !== 'ACCESSORY' && (
+                      {cat !== 'ACCESSORY' && !isPacket && (
                         <div className="grid gap-1">
                           <Label className="text-xs">+ Sheets</Label>
                           <Input className="h-8" type="number" min="0" step="1" placeholder="0" value={line.extraSheets} onChange={e => updateLine(line.id, { extraSheets: e.target.value })} />
@@ -652,7 +696,7 @@ export function PurchasesPage() {
                         </div>
                         <div className="flex justify-between">
                           <span>Total: <span className="font-medium text-foreground">{formatBDT(bdtToPoisha(cost * qty))}</span></span>
-                          <span>{Math.round(qty * spu).toLocaleString()} sheets</span>
+                          <span>{Math.round(qty * spu).toLocaleString()} {isPacket ? 'packets' : 'sheets'}</span>
                         </div>
                       </div>
                     )}
