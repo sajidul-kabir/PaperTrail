@@ -1,10 +1,15 @@
 import { useState } from 'react'
+import { v4 as uuid } from 'uuid'
 import { useQuery } from '@/hooks/useQuery'
+import { dbRun } from '@/lib/ipc'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { useToast } from '@/components/ui/toast'
 import { formatBDT, formatNumber, paperTypeLabel, formatSize } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import { sheetsPerUnit, unitLabelPlural, paperDisplayType, isPacketVariant } from '@/lib/paper-type'
@@ -116,11 +121,14 @@ SELECT COALESCE(SUM(total_cost_poisha), 0) as total FROM purchases
 `
 
 export function GodownPage() {
+  const { addToast } = useToast()
   const [filter, setFilter] = useState('')
   const [viewCategory, setViewCategory] = useState<'ALL' | Category>('ALL')
-  const { data: stockRows, loading: stockLoading, error: stockError } = useQuery<StockRow>(STOCK_SQL)
+  const [deleteTarget, setDeleteTarget] = useState<{ type: 'paper'; id: string; label: string; sheets: number } | { type: 'accessory'; id: string; label: string; pieces: number } | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const { data: stockRows, loading: stockLoading, error: stockError, refetch: refetchStock } = useQuery<StockRow>(STOCK_SQL)
   const { data: costRows, loading: costLoading, error: costError } = useQuery<AvgCostRow>(AVG_COST_SQL)
-  const { data: accessoryStockRows, loading: accStockLoading, error: accStockError } = useQuery<AccessoryStockRow>(ACCESSORY_STOCK_SQL)
+  const { data: accessoryStockRows, loading: accStockLoading, error: accStockError, refetch: refetchAccStock } = useQuery<AccessoryStockRow>(ACCESSORY_STOCK_SQL)
   const { data: accessoryCostRows, loading: accCostLoading, error: accCostError } = useQuery<AccessoryCostRow>(ACCESSORY_COST_SQL)
   const { data: monthlyPurchases } = useQuery<MonthlyPurchaseRow>(MONTHLY_PURCHASES_SQL)
   const { data: totalPurchasesRows } = useQuery<{ total: number }>(TOTAL_PURCHASES_SQL)
@@ -141,6 +149,29 @@ export function GodownPage() {
   const filteredAccessoryRows = accessoryStockRows
     .filter(() => viewCategory === 'ALL' || viewCategory === 'ACCESSORY')
     .filter(row => row.accessory_name.toLowerCase().includes(filter.toLowerCase()))
+
+  async function handleDelete() {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      if (deleteTarget.type === 'paper') {
+        await dbRun(
+          `INSERT INTO stock_ledger (id, paper_type_id, accessory_id, transaction_type, quantity_sheets, reference_id, created_at) VALUES (?, ?, NULL, 'ADJUSTMENT', ?, 'godown-delete', datetime('now'))`,
+          [uuid(), deleteTarget.id, -deleteTarget.sheets]
+        )
+      } else {
+        await dbRun(
+          `INSERT INTO stock_ledger (id, paper_type_id, accessory_id, transaction_type, quantity_sheets, reference_id, created_at) VALUES (?, NULL, ?, 'ADJUSTMENT', ?, 'godown-delete', datetime('now'))`,
+          [uuid(), deleteTarget.id, -deleteTarget.pieces]
+        )
+      }
+      addToast({ title: 'Stock removed', description: `${deleteTarget.label} deleted from godown.` })
+      setDeleteTarget(null)
+      refetchStock(); refetchAccStock()
+    } catch (err: any) {
+      addToast({ title: 'Failed', description: err.message, variant: 'destructive' })
+    } finally { setDeleting(false) }
+  }
 
   const showPaperRows = viewCategory !== 'ACCESSORY'
   const showAccessoryRows = viewCategory === 'ALL' || viewCategory === 'ACCESSORY'
@@ -261,12 +292,13 @@ export function GodownPage() {
                 <TableHead className="text-right">Avg Cost / Sheet</TableHead>
                 <TableHead className="text-right">Total Value</TableHead>
                 <TableHead className="w-24">Status</TableHead>
+                <TableHead className="w-16"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {totalItems === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground py-8">No items found.</TableCell>
+                  <TableCell colSpan={9} className="text-center text-muted-foreground py-8">No items found.</TableCell>
                 </TableRow>
               )}
               {showPaperRows && filteredRows.map((row) => {
@@ -311,6 +343,12 @@ export function GodownPage() {
                     <TableCell>
                       {isLow ? <Badge variant="destructive">Low</Badge> : <Badge variant="secondary">OK</Badge>}
                     </TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                        onClick={() => setDeleteTarget({ type: 'paper', id: row.paper_type_id, label: paperTypeLabel(row.brand_name, row.gsm_value, row.width_inches, row.height_inches, row.variant), sheets: totalSheets })}>
+                        Delete
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 )
               })}
@@ -344,6 +382,12 @@ export function GodownPage() {
                     <TableCell>
                       {isLow ? <Badge variant="destructive">Low</Badge> : <Badge variant="secondary">OK</Badge>}
                     </TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                        onClick={() => setDeleteTarget({ type: 'accessory', id: row.accessory_id, label: row.accessory_name, pieces: totalPieces })}>
+                        Delete
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 )
               })}
@@ -351,6 +395,24 @@ export function GodownPage() {
           </Table>
         </>
       )}
+
+      {/* Delete confirmation */}
+      <Dialog open={!!deleteTarget} onOpenChange={v => { if (!v) setDeleteTarget(null) }}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader><DialogTitle>Delete from Godown?</DialogTitle></DialogHeader>
+          {deleteTarget && (
+            <div className="flex flex-col gap-3 pt-2">
+              <p className="text-sm text-muted-foreground">
+                This will remove all stock of <span className="font-semibold text-foreground">{deleteTarget.label}</span> from godown ({deleteTarget.type === 'paper' ? `${formatNumber(deleteTarget.sheets)} sheets` : `${formatNumber(deleteTarget.pieces)} pieces`}).
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" size="sm" onClick={() => setDeleteTarget(null)} disabled={deleting}>Cancel</Button>
+                <Button variant="destructive" size="sm" onClick={handleDelete} disabled={deleting}>{deleting ? 'Deleting…' : 'Delete'}</Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

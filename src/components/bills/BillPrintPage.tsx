@@ -92,7 +92,7 @@ export function BillPrintPage() {
           font-family: 'Noto Sans Bengali', 'Kalpurush', system-ui, sans-serif;
         }
         .bill-page * { color: black; }
-        .bill-content { padding: 0 0.25in; }
+        .bill-content { padding: 0 0.35in; }
         .bill-header-spacer { height: 1in; }
         .bill-date { text-align: right; font-size: 11px; margin-bottom: 6px; }
         .customer-info { font-size: 11.5px; margin-bottom: 8px; line-height: 1.5; }
@@ -130,7 +130,7 @@ export function BillPrintPage() {
         .bill-page { width: 5.33in; margin: 0 auto; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
         /* Print overrides */
         @media print {
-          @page { size: A5; margin: 1in 0.25in 0.25in 0.25in; }
+          @page { size: A5; margin: 1in 0.35in 0.4in 0.35in; }
           html, body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
           .no-print { display: none !important; }
           .bill-page-wrapper { transform: none !important; margin: 0 !important; }
@@ -300,7 +300,7 @@ export function BillPrintPage() {
                               padding: "3px 6px",
                               fontWeight: 700,
                               textAlign: "right",
-                              width: "61px",
+                              width: "59px",
                             }}
                           >
                             মোট
