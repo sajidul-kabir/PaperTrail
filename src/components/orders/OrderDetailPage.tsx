@@ -117,6 +117,12 @@ export function OrderDetailPage() {
           <h1 className="text-lg font-semibold">Order Detail</h1>
           <Badge variant={order.status === 'PENDING' ? 'secondary' : order.status === 'BILLED' ? 'default' : 'destructive'} className="text-[10px] px-1.5 py-0">{order.status}</Badge>
         </div>
+        <div className="flex items-center gap-2">
+        {order.status === 'PENDING' && (
+          <Button variant="outline" size="sm" onClick={() => navigate('/orders/new', { state: { editOrderId: order.id } })}>
+            Edit Order
+          </Button>
+        )}
         {(order.status === 'PENDING' || order.status === 'BILLED') && (
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild><Button variant="destructive" size="sm">Void Order</Button></DialogTrigger>
@@ -138,6 +144,7 @@ export function OrderDetailPage() {
             </DialogContent>
           </Dialog>
         )}
+        </div>
       </div>
 
       <Card>

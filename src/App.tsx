@@ -15,6 +15,7 @@ import { OrderDetailPage } from '@/components/orders/OrderDetailPage'
 import { BillsPage } from '@/components/bills/BillsPage'
 import { MemoPage } from '@/components/bills/MemoPage'
 import { BillPrintPage } from '@/components/bills/BillPrintPage'
+import { EditBillPage } from '@/components/bills/EditBillPage'
 import { InvoiceDetailPage } from '@/components/sales/InvoiceDetailPage'
 import { CustomersPage } from '@/components/customers/CustomersPage'
 import { CustomerDetailPage } from '@/components/customers/CustomerDetailPage'
@@ -40,6 +41,7 @@ export default function App() {
         <Route path="/orders/:id" element={<OrderDetailPage />} />
         <Route path="/bills" element={<BillsPage />} />
         <Route path="/bills/memo" element={<MemoPage />} />
+        <Route path="/bills/:id/edit" element={<EditBillPage />} />
         <Route path="/bills/:id/print" element={<BillPrintPage />} />
         <Route path="/bills/:id" element={<InvoiceDetailPage />} />
         <Route path="/customers" element={<CustomersPage />} />

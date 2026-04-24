@@ -207,7 +207,7 @@ export function BillsPage() {
                   const margin = b.total_poisha > 0 ? (b.total_profit / b.total_poisha) * 100 : 0
                   const isVoid = b.status === 'VOID'
                   return (
-                    <TableRow key={b.id} className="cursor-pointer" onClick={() => navigate(`/bills/${b.id}`)}>
+                    <TableRow key={b.id} className="cursor-pointer" tabIndex={0} onClick={() => navigate(`/bills/${b.id}`)} onKeyDown={e => e.key === 'Enter' && navigate(`/bills/${b.id}`)}>
                       <TableCell className="font-mono text-xs font-medium">{b.invoice_number}</TableCell>
                       <TableCell className="font-medium">{b.customer_organization || b.customer_name}</TableCell>
                       <TableCell className={`text-right tabular-nums ${isVoid ? 'line-through text-muted-foreground' : ''}`}>{formatBDT(b.total_poisha)}</TableCell>

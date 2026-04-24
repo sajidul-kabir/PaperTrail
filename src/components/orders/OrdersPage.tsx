@@ -155,7 +155,7 @@ export function OrdersPage() {
                   const isVoid = o.status === 'VOID'
                   const margin = o.total_poisha > 0 ? (o.total_profit / o.total_poisha) * 100 : 0
                   return (
-                    <TableRow key={o.id} className="cursor-pointer" onClick={() => navigate(`/orders/${o.id}`)}>
+                    <TableRow key={o.id} className="cursor-pointer" tabIndex={0} onClick={() => navigate(`/orders/${o.id}`)} onKeyDown={e => e.key === 'Enter' && navigate(`/orders/${o.id}`)}>
                       <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
                       <TableCell className="font-medium max-w-[200px] truncate">{o.customer_organization || o.customer_name}</TableCell>
                       <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDate(o.order_date)}</TableCell>

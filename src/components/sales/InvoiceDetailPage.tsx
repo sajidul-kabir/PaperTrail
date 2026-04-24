@@ -346,6 +346,11 @@ export function InvoiceDetailPage() {
 
         <div className="flex items-center gap-2">
           {!isVoid && (
+            <Button variant="outline" size="sm" onClick={() => navigate(`/bills/${invoice.id}/edit`)}>
+              Edit Bill
+            </Button>
+          )}
+          {!isVoid && (
             <Button variant="outline" size="sm" onClick={handlePrint}>
               Print Again
             </Button>
@@ -451,45 +456,32 @@ export function InvoiceDetailPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Paper Type</TableHead>
-                  <TableHead className="text-right">Cut (W×H)</TableHead>
-                  <TableHead className="text-right">Qty</TableHead>
-                  <TableHead className="text-right">Rate/full sheet</TableHead>
-                  <TableHead className="text-right">Area Ratio</TableHead>
-                  <TableHead className="text-right">Full Sheets</TableHead>
-                  <TableHead className="text-right">Waste</TableHead>
-                  <TableHead className="text-right">Line Total</TableHead>
+                  <TableHead>Item</TableHead>
+                  <TableHead>Size</TableHead>
+                  <TableHead className="text-right">Sheets</TableHead>
+                  <TableHead className="text-right">Pieces</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
                   <TableHead className="text-right">Cost</TableHead>
                   <TableHead className="text-right">Profit</TableHead>
                   <TableHead className="text-right">Margin</TableHead>
-                  <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {lines.map((line) => (
                   <TableRow key={line.id} className={isVoid ? 'opacity-50' : ''}>
-                    <TableCell className="text-xs leading-tight max-w-[180px] truncate">
+                    <TableCell className="text-sm max-w-[200px] truncate">
                       {line.paper_type_label}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums text-xs text-muted-foreground whitespace-nowrap">
-                      {line.cut_width_inches}" × {line.cut_height_inches}"
+                    <TableCell className="tabular-nums text-xs text-muted-foreground">
+                      {line.cut_width_inches && line.cut_height_inches ? `${Math.min(line.cut_width_inches, line.cut_height_inches)}x${Math.max(line.cut_width_inches, line.cut_height_inches)}` : '—'}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums text-xs">
+                    <TableCell className="text-right tabular-nums">
+                      {line.full_sheets_consumed > 0 ? formatNumber(line.full_sheets_consumed) : '—'}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
                       {formatNumber(line.quantity_sheets)}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums text-xs">
-                      {formatBDT(line.selling_price_per_sheet_poisha)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-xs text-muted-foreground">
-                      {(line.area_ratio * 100).toFixed(2)}%
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-xs text-muted-foreground">
-                      {formatNumber(line.full_sheets_consumed, 2)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-xs text-muted-foreground">
-                      {formatNumber(line.waste_sheets, 2)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-sm font-medium">
+                    <TableCell className="text-right tabular-nums font-medium">
                       {formatBDT(line.line_total_poisha)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-xs text-muted-foreground">
@@ -503,14 +495,11 @@ export function InvoiceDetailPage() {
                       {formatBDT(line.profit_poisha)}
                     </TableCell>
                     <TableCell
-                      className={`text-right tabular-nums text-xs font-medium ${
+                      className={`text-right tabular-nums text-xs ${
                         isVoid ? 'text-muted-foreground' : profitColor(line.profit_margin_pct)
                       }`}
                     >
                       {line.profit_margin_pct.toFixed(1)}%
-                    </TableCell>
-                    <TableCell>
-                      <ProfitBreakdown line={line} />
                     </TableCell>
                   </TableRow>
                 ))}

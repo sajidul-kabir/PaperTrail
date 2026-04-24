@@ -1,8 +1,8 @@
-import { useState, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useCallback, useEffect } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { v4 as uuid } from 'uuid'
 import { useQuery } from '@/hooks/useQuery'
-import { dbTransaction } from '@/lib/ipc'
+import { dbQuery, dbTransaction } from '@/lib/ipc'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { DatePicker } from '@/components/ui/date-picker'
@@ -73,6 +73,7 @@ const GODOWN_SQL = `
   HAVING total_sheets > 0
   ORDER BY pt.category, b.name, g.value
 `
+
 
 const ACCESSORY_GODOWN_SQL = `
   SELECT a.id as accessory_id,
@@ -162,19 +163,112 @@ function categoryBadgeClass(cat: string): string {
 
 export function NewOrderPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { addToast } = useToast()
+
+  const editOrderId = (location.state as any)?.editOrderId as string | undefined
+  const isEditMode = !!editOrderId
 
   const [customerId, setCustomerId] = useState('')
   const [customerFilter, setCustomerFilter] = useState('')
   const [orderDate, setOrderDate] = useState(todayISO())
   const [lines, setLines] = useState<LineItem[]>([emptyLine()])
   const [saving, setSaving] = useState(false)
+  const [editLoaded, setEditLoaded] = useState(false)
 
   const { data: customers, loading: customersLoading } = useQuery<CustomerRow>(CUSTOMERS_SQL, [], [])
   const { data: godownItems } = useQuery<GodownItem>(GODOWN_SQL, [], [])
   const { data: accessoryItems } = useQuery<AccessoryItem>(ACCESSORY_GODOWN_SQL, [], [])
   const { data: costRows } = useQuery<CostRow>(COSTS_SQL, [], [])
   const { data: accCostRows } = useQuery<AccessoryCostRow>(ACCESSORY_COSTS_SQL, [], [])
+
+  // Load existing order data in edit mode
+  useEffect(() => {
+    if (!editOrderId || editLoaded || godownItems.length === 0) return
+    ;(async () => {
+      try {
+        const orderRows = await dbQuery<{ customer_id: string; order_date: string }>(
+          `SELECT customer_id, order_date FROM orders WHERE id = ?`, [editOrderId]
+        )
+        if (orderRows.length === 0) return
+        setCustomerId(orderRows[0].customer_id)
+        setOrderDate(orderRows[0].order_date)
+
+        const orderLines = await dbQuery<{
+          paper_type_id: string | null; accessory_id: string | null
+          cut_width_inches: number | null; cut_height_inches: number | null
+          quantity_pieces: number; quantity_sheets: number
+          line_total_poisha: number; label: string | null
+        }>(
+          `SELECT paper_type_id, accessory_id, cut_width_inches, cut_height_inches, quantity_pieces, quantity_sheets, line_total_poisha, label FROM order_lines WHERE order_id = ? ORDER BY ROWID ASC`,
+          [editOrderId]
+        )
+
+        const newLines: LineItem[] = orderLines.map(ol => {
+          const isAcc = !!ol.accessory_id
+          let cutSize = ''
+          if (ol.cut_width_inches && ol.cut_height_inches) {
+            const w = Math.min(ol.cut_width_inches, ol.cut_height_inches)
+            const h = Math.max(ol.cut_width_inches, ol.cut_height_inches)
+            // Check if this is a full-sheet size (matches the godown item dimensions)
+            const item = ol.paper_type_id ? godownItems.find(g => g.paper_type_id === ol.paper_type_id) : undefined
+            if (item) {
+              const fullW = Math.min(item.width_inches, item.height_inches)
+              const fullH = Math.max(item.width_inches, item.height_inches)
+              if (w !== fullW || h !== fullH) {
+                cutSize = `${w}x${h}`
+              }
+            } else {
+              cutSize = `${w}x${h}`
+            }
+          }
+
+          // Back-calculate selling price
+          let sellingPrice = ''
+          if (ol.quantity_sheets > 0 && ol.line_total_poisha > 0) {
+            if (isAcc) {
+              // Accessory: price per piece
+              sellingPrice = String(poishaToBdt(Math.round(ol.line_total_poisha / ol.quantity_pieces)))
+            } else {
+              const item = godownItems.find(g => g.paper_type_id === ol.paper_type_id)
+              if (item) {
+                if (isPacketVariant(item.variant)) {
+                  sellingPrice = String(poishaToBdt(Math.round(ol.line_total_poisha / ol.quantity_pieces)))
+                } else if (item.category === 'PAPER') {
+                  // Price per ream: lineTotal / sheets * 500
+                  const pricePerSheet = ol.line_total_poisha / ol.quantity_sheets
+                  sellingPrice = String(poishaToBdt(Math.round(pricePerSheet * 500)))
+                } else {
+                  // CARD/STICKER: price per sheet
+                  const pricePerSheet = ol.line_total_poisha / ol.quantity_sheets
+                  sellingPrice = String(poishaToBdt(Math.round(pricePerSheet)))
+                }
+              }
+            }
+          }
+
+          return {
+            id: uuid(),
+            paper_type_id: ol.paper_type_id ?? '',
+            accessory_id: ol.accessory_id ?? '',
+            quantity_pieces: String(ol.quantity_pieces),
+            cut_size: cutSize,
+            sheetsOverride: String(ol.quantity_sheets),
+            cuttingFee: '',
+            selling_price: sellingPrice,
+            totalOverride: String(poishaToBdt(ol.line_total_poisha)),
+            itemFilter: '',
+            categoryFilter: '',
+          }
+        })
+
+        setLines(newLines.length > 0 ? newLines : [emptyLine()])
+        setEditLoaded(true)
+      } catch (err: any) {
+        addToast({ title: 'Failed to load order', description: err.message, variant: 'destructive' })
+      }
+    })()
+  }, [editOrderId, editLoaded, godownItems])
 
   const godownMap = new Map(godownItems.map(i => [i.paper_type_id, i]))
   const accMap = new Map(accessoryItems.map(a => [a.accessory_id, a]))
@@ -218,7 +312,7 @@ export function NewOrderPage() {
       const next = { ...l, ...patch }
       if ('paper_type_id' in patch && patch.paper_type_id) next.accessory_id = ''
       if ('accessory_id' in patch && patch.accessory_id) { next.paper_type_id = ''; next.cut_size = ''; next.sheetsOverride = '' }
-      if ('cut_size' in patch) next.sheetsOverride = ''
+      if ('cut_size' in patch || 'quantity_pieces' in patch) next.sheetsOverride = ''
       if ('quantity_pieces' in patch || 'selling_price' in patch || 'cut_size' in patch || 'sheetsOverride' in patch || 'cuttingFee' in patch) next.totalOverride = ''
       return next
     }))
@@ -351,13 +445,41 @@ export function NewOrderPage() {
     if (!canSave) return
     setSaving(true)
     try {
-      const orderId = uuid()
+      const orderId = isEditMode ? editOrderId! : uuid()
       const statements: { sql: string; params: any[] }[] = []
 
-      statements.push({
-        sql: `INSERT INTO orders (id, customer_id, order_date, status, notes, created_at) VALUES (?, ?, ?, 'PENDING', NULL, datetime('now'))`,
-        params: [orderId, customerId, orderDate],
-      })
+      if (isEditMode) {
+        // Step 1: Reverse net stock impact for this order (handles re-edits correctly)
+        const netEntries = await dbQuery<{ paper_type_id: string | null; accessory_id: string | null; net_sheets: number }>(
+          `SELECT paper_type_id, accessory_id, SUM(quantity_sheets) as net_sheets FROM stock_ledger WHERE reference_id = ? GROUP BY paper_type_id, accessory_id`,
+          [orderId]
+        )
+        for (const entry of netEntries) {
+          if (entry.net_sheets === 0) continue
+          statements.push({
+            sql: `INSERT INTO stock_ledger (id, paper_type_id, accessory_id, transaction_type, quantity_sheets, reference_id, created_at)
+                  VALUES (?, ?, ?, 'VOID_REVERSAL', ?, ?, datetime('now'))`,
+            params: [uuid(), entry.paper_type_id, entry.accessory_id, -entry.net_sheets, orderId],
+          })
+        }
+
+        // Step 2: Delete old order_lines
+        statements.push({
+          sql: `DELETE FROM order_lines WHERE order_id = ?`,
+          params: [orderId],
+        })
+
+        // Step 3: Update order header
+        statements.push({
+          sql: `UPDATE orders SET customer_id = ?, order_date = ? WHERE id = ?`,
+          params: [customerId, orderDate, orderId],
+        })
+      } else {
+        statements.push({
+          sql: `INSERT INTO orders (id, customer_id, order_date, status, notes, created_at) VALUES (?, ?, ?, 'PENDING', NULL, datetime('now'))`,
+          params: [orderId, customerId, orderDate],
+        })
+      }
 
       for (const { line, result } of calcs) {
         if (!result) continue
@@ -396,16 +518,68 @@ export function NewOrderPage() {
       }
 
       await dbTransaction(statements)
-      addToast({ title: 'Order saved', description: `Order created with ${validCalcs.length} items.` })
-      navigate('/orders')
+
+      // Post-transaction: regenerate invoice_lines if editing a BILLED order
+      if (isEditMode) {
+        const orderRows = await dbQuery<{ invoice_id: string | null }>(
+          `SELECT invoice_id FROM orders WHERE id = ?`, [orderId]
+        )
+        const invoiceId = orderRows[0]?.invoice_id
+        if (invoiceId) {
+          const allOrderLines = await dbQuery<{
+            paper_type_id: string | null; accessory_id: string | null
+            cut_width_inches: number | null; cut_height_inches: number | null
+            quantity_pieces: number; selling_price_per_piece_poisha: number
+            line_total_poisha: number; cost_per_piece_poisha: number
+            cost_total_poisha: number; profit_poisha: number; profit_margin_pct: number; label: string | null
+          }>(
+            `SELECT ol.paper_type_id, ol.accessory_id, ol.cut_width_inches, ol.cut_height_inches,
+                    ol.quantity_pieces, ol.selling_price_per_piece_poisha, ol.line_total_poisha,
+                    ol.cost_per_piece_poisha, ol.cost_total_poisha, ol.profit_poisha, ol.profit_margin_pct, ol.label
+             FROM order_lines ol
+             JOIN orders o ON o.id = ol.order_id
+             WHERE o.invoice_id = ? ORDER BY ol.ROWID ASC`,
+            [invoiceId]
+          )
+
+          const invoiceStmts: { sql: string; params: any[] }[] = [
+            { sql: `DELETE FROM invoice_lines WHERE invoice_id = ?`, params: [invoiceId] },
+          ]
+
+          for (const ol of allOrderLines) {
+            invoiceStmts.push({
+              sql: `INSERT INTO invoice_lines (id, invoice_id, paper_type_id, accessory_id, cut_width_inches, cut_height_inches, quantity_sheets, selling_price_per_sheet_poisha, area_ratio, full_sheets_consumed, cost_per_full_sheet_poisha, cost_total_poisha, profit_poisha, profit_margin_pct, waste_sheets, line_total_poisha)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              params: [uuid(), invoiceId, ol.paper_type_id, ol.accessory_id, ol.cut_width_inches, ol.cut_height_inches,
+                ol.quantity_pieces, Math.round(ol.selling_price_per_piece_poisha), 1, ol.quantity_pieces,
+                Math.round(ol.cost_per_piece_poisha), ol.cost_total_poisha, ol.profit_poisha, ol.profit_margin_pct, 0, ol.line_total_poisha],
+            })
+          }
+
+          const newTotal = allOrderLines.reduce((a, l) => a + l.line_total_poisha, 0)
+          invoiceStmts.push({
+            sql: `UPDATE invoices SET total_poisha = ?, subtotal_poisha = ? WHERE id = ?`,
+            params: [newTotal, newTotal, invoiceId],
+          })
+
+          await dbTransaction(invoiceStmts)
+        }
+      }
+
+      addToast({ title: isEditMode ? 'Order updated' : 'Order saved', description: `Order ${isEditMode ? 'updated' : 'created'} with ${validCalcs.length} items.` })
+      navigate(isEditMode ? `/orders/${orderId}` : '/orders')
     } catch (err: any) {
       addToast({ title: 'Save failed', description: err.message, variant: 'destructive' })
     } finally { setSaving(false) }
   }
 
+  if (isEditMode && !editLoaded) {
+    return <div className="flex items-center justify-center py-20 text-sm text-muted-foreground p-4">Loading order...</div>
+  }
+
   return (
     <div className="flex flex-col gap-4 p-4 max-w-2xl mx-auto w-full">
-      <h1 className="text-lg font-semibold">New Order</h1>
+      <h1 className="text-lg font-semibold">{isEditMode ? 'Edit Order' : 'New Order'}</h1>
 
       <Card>
         <CardHeader className="pb-2"><CardTitle>Order Details</CardTitle></CardHeader>
@@ -714,7 +888,7 @@ export function NewOrderPage() {
 
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={() => navigate('/orders')}>Cancel</Button>
-        <Button onClick={handleSave} disabled={!canSave || saving}>{saving ? 'Saving...' : 'Save Order'}</Button>
+        <Button onClick={handleSave} disabled={!canSave || saving}>{saving ? 'Saving...' : isEditMode ? 'Update Order' : 'Save Order'}</Button>
       </div>
     </div>
   )

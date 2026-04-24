@@ -140,7 +140,7 @@ export function BillPrintPage() {
             border-radius: 0 !important; box-shadow: none !important;
           }
           .bill-header-spacer { display: none !important; }
-          .bill-content { padding: 0 !important; }
+          .bill-content { padding: 0 !important; position: relative; bottom: 70px; }
           .bill-table tr { page-break-inside: avoid; }
           .bill-footer-section { page-break-inside: avoid; }
         }
@@ -182,6 +182,16 @@ export function BillPrintPage() {
                     >
                       <span style={{ fontWeight: 700 }}>
                         {data.invoice_number}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "18px",
+                          fontWeight: 700,
+                          position: "relative",
+                          bottom: "10px",
+                        }}
+                      >
+                        ক্যাশ মেমো
                       </span>
                       <span style={{ fontSize: "13px" }}>
                         তারিখ : {formatDateBN(data.bill_date)}
