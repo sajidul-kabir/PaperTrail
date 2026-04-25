@@ -185,21 +185,21 @@ export function BillPrintPage() {
                       </span>
                       <span
                         style={{
-                          fontSize: "18px",
+                          fontSize: "15px",
                           fontWeight: 700,
                           position: "relative",
                           bottom: "10px",
                         }}
                       >
-                        ক্যাশ মেমো
+                        Cash Memo
                       </span>
                       <span style={{ fontSize: "13px" }}>
-                        তারিখ : {formatDateBN(data.bill_date)}
+                        Date : {formatDateBN(data.bill_date)}
                       </span>
                     </div>
                     <div className="customer-info">
                       <div style={{ display: "flex", alignItems: "baseline" }}>
-                        <span className="label">প্রতিষ্ঠানের নাম :</span>
+                        <span className="label">Customer :</span>
                         <span className="dots" />
                         <span className="value relative right-[207px] bottom-3 text-base">
                           {data.customer_display}
@@ -235,11 +235,11 @@ export function BillPrintPage() {
                   </colgroup>
                   <thead>
                     <tr>
-                      <th>সাইজ</th>
-                      <th>বিবরণ</th>
-                      <th>পরিমাণ</th>
-                      <th>দর</th>
-                      <th>টাকা</th>
+                      <th>Size</th>
+                      <th>Description</th>
+                      <th>Quantity</th>
+                      <th>Rate</th>
+                      <th>Amount</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -313,7 +313,7 @@ export function BillPrintPage() {
                               width: "59px",
                             }}
                           >
-                            মোট
+                            Total
                           </td>
                           <td
                             style={{
@@ -336,7 +336,7 @@ export function BillPrintPage() {
                               textAlign: "right",
                             }}
                           >
-                            সাবেক
+                            Previous
                           </td>
                           <td
                             style={{
@@ -361,7 +361,7 @@ export function BillPrintPage() {
                               textAlign: "right",
                             }}
                           >
-                            সর্বমোট
+                            Subtotal
                           </td>
                           <td
                             style={{
@@ -384,7 +384,7 @@ export function BillPrintPage() {
                               textAlign: "right",
                             }}
                           >
-                            জমা
+                            Paid
                           </td>
                           <td
                             style={{
@@ -397,7 +397,7 @@ export function BillPrintPage() {
                           >
                             {data.paying_now > 0
                               ? formatTaka(data.paying_now)
-                              : "—"}
+                              : " "}
                           </td>
                         </tr>
                         <tr>
@@ -409,7 +409,7 @@ export function BillPrintPage() {
                               textAlign: "right",
                             }}
                           >
-                            বাকী
+                            Due
                           </td>
                           <td
                             style={{
@@ -419,14 +419,12 @@ export function BillPrintPage() {
                               fontWeight: 700,
                               fontVariantNumeric: "tabular-nums",
                             }}
-                          >
-                            {formatTaka(Math.max(0, data.remaining))}
-                          </td>
+                          ></td>
                         </tr>
                       </tbody>
                     </table>
                     <div className="signature-line relative bottom-[45px] right-[75px]">
-                      স্বাক্ষর
+                      Signature
                     </div>
                   </div>
                 )}

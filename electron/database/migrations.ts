@@ -516,6 +516,28 @@ const migrations: { version: number; sql: string }[] = [
       ALTER TABLE customers ADD COLUMN previous_balance_poisha INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 13,
+    sql: `
+      CREATE TABLE IF NOT EXISTS supplier_payments (
+        id TEXT PRIMARY KEY,
+        supplier_id TEXT NOT NULL REFERENCES suppliers(id),
+        amount_poisha INTEGER NOT NULL,
+        payment_date TEXT NOT NULL,
+        payment_method TEXT NOT NULL DEFAULT 'CASH'
+          CHECK(payment_method IN ('CASH', 'BANK_TRANSFER', 'CHECK', 'OTHER')),
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_supplier_payments_supplier ON supplier_payments(supplier_id);
+    `,
+  },
+  {
+    version: 14,
+    sql: `
+      ALTER TABLE suppliers ADD COLUMN previous_outstanding_poisha INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ]
 
 export function runMigrations(db: Database.Database) {

@@ -182,13 +182,13 @@ export function MemoPage() {
           <p className="sub">দেশী-বিদেশী কাগজ বিক্রয় ও প্রিন্টিং কাজের অর্ডার নেওয়া হয়।</p>
           <p className="addr">হক সুপার মার্কেট, চিটাগারোড, সিদ্ধিরগঞ্জ, নারায়ণগঞ্জ।</p>
           <p className="mob">মোবাইল :০১৮১৯-১৫৩৩৮০</p>
-          <div className="mbadge">ক্যাশ মেমো</div>
+          <div className="mbadge">Cash Memo</div>
         </div>
 
         <div className="memo-body">
-          <div style={{ textAlign: 'right', fontSize: '11px', marginBottom: '6px' }}>তারিখ :{formatDateBN(memo.bill_date)}</div>
+          <div style={{ textAlign: 'right', fontSize: '11px', marginBottom: '6px' }}>Date : {formatDateBN(memo.bill_date)}</div>
           <div style={{ fontSize: '11px', marginBottom: '8px', display: 'flex', alignItems: 'baseline' }}>
-            <span>প্রতিষ্ঠানের নাম :</span>
+            <span>Customer :</span>
             <span style={{ flex: 1, borderBottom: '1px dotted #999', margin: '0 4px' }} />
             <span style={{ fontWeight: 600 }}>{customerDisplay}</span>
           </div>
@@ -196,11 +196,11 @@ export function MemoPage() {
           <table style={{ marginBottom: '0' }}>
             <thead>
               <tr>
-                <th style={{ width: '18%' }}>সাইজ</th>
-                <th>বিবরণ</th>
-                <th style={{ width: '14%' }}>পরিমাণ</th>
-                <th style={{ width: '14%' }}>দর</th>
-                <th style={{ width: '16%' }}>টাকা</th>
+                <th style={{ width: '18%' }}>Size</th>
+                <th>Description</th>
+                <th style={{ width: '14%' }}>Qty</th>
+                <th style={{ width: '14%' }}>Rate</th>
+                <th style={{ width: '16%' }}>Amount</th>
               </tr>
             </thead>
             <tbody>
@@ -227,19 +227,19 @@ export function MemoPage() {
             <tbody>
               <tr>
                 <td colSpan={3} rowSpan={5} style={{ border: '1px solid #888', verticalAlign: 'top' }}></td>
-                <td className="lbl" style={{ border: '1px solid #888' }}>মোট</td>
+                <td className="lbl" style={{ border: '1px solid #888' }}>Total</td>
                 <td className="amt" style={{ border: '1px solid #888', width: '16%' }}>{formatTaka(billTotal)}</td>
               </tr>
               <tr>
-                <td className="lbl" style={{ border: '1px solid #888' }}>সাবেক</td>
+                <td className="lbl" style={{ border: '1px solid #888' }}>Previous</td>
                 <td className="amt" style={{ border: '1px solid #888' }}>{outstanding > 0 ? formatTaka(outstanding) : '—'}</td>
               </tr>
               <tr>
-                <td className="lbl" style={{ border: '1px solid #888' }}>সর্বমোট</td>
+                <td className="lbl" style={{ border: '1px solid #888' }}>Subtotal</td>
                 <td className="amt" style={{ border: '1px solid #888', fontWeight: 700 }}>{formatTaka(grandTotal)}</td>
               </tr>
               <tr>
-                <td className="lbl" style={{ border: '1px solid #888' }}>জমা</td>
+                <td className="lbl" style={{ border: '1px solid #888' }}>Paid</td>
                 <td className="amt" style={{ border: '1px solid #888' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '2px' }}>
                     <span style={{ fontSize: '9px', opacity: 0.6 }}>৳</span>
@@ -251,7 +251,7 @@ export function MemoPage() {
                 </td>
               </tr>
               <tr>
-                <td className="lbl" style={{ border: '1px solid #888' }}>বাকী</td>
+                <td className="lbl" style={{ border: '1px solid #888' }}>Due</td>
                 <td className="amt" style={{ border: '1px solid #888', fontWeight: 700, color: remaining > 0 ? '#dc2626' : '#16a34a' }}>
                   {formatTaka(Math.max(0, remaining))}
                 </td>
