@@ -538,6 +538,12 @@ const migrations: { version: number; sql: string }[] = [
       ALTER TABLE suppliers ADD COLUMN previous_outstanding_poisha INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 15,
+    sql: `
+      ALTER TABLE purchases ADD COLUMN extra_cost_per_unit_poisha INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ]
 
 export function runMigrations(db: Database.Database) {

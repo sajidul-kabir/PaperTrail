@@ -42,7 +42,7 @@ const PURCHASES_SQL = `
     COALESCE(p.width_inches, 0) as width_inches,
     COALESCE(p.height_inches, 0) as height_inches,
     COALESCE(at.name, '') as accessory_name,
-    pu.quantity_reams, pu.cost_per_ream_poisha,
+    pu.quantity_reams, pu.cost_per_ream_poisha, COALESCE(pu.extra_cost_per_unit_poisha, 0) as extra_cost_per_unit_poisha,
     pu.supplier_name, pu.notes,
     pu.paper_type_id, pu.accessory_id,
     pt.brand_id, pt.gsm_id, pt.proportion_id, COALESCE(pt.variant, '') as variant,
@@ -74,7 +74,7 @@ interface SupplierOption { id: string; name: string }
 interface Purchase {
   id: string; purchase_date: string; category: Category
   brand_name: string; gsm_value: number; width_inches: number; height_inches: number
-  accessory_name: string; quantity_reams: number; cost_per_ream_poisha: number
+  accessory_name: string; quantity_reams: number; cost_per_ream_poisha: number; extra_cost_per_unit_poisha: number
   supplier_name: string | null; notes: string | null
   paper_type_id: string | null; accessory_id: string | null; variant: string
   brand_id: string | null; gsm_id: string | null; proportion_id: string | null
@@ -107,11 +107,11 @@ interface PurchaseLine {
   category: Category
   brandId: string; gsmId: string; proportionId: string; accessoryId: string
   paperSubtype: string; variant: string; variantFilter: string; variantTab: string
-  quantity: string; extraSheets: string; costPerUnit: string
+  quantity: string; extraSheets: string; costPerUnit: string; extraCostPerUnit: string
 }
 
 function emptyLine(): PurchaseLine {
-  return { id: uuid(), category: 'PAPER', brandId: '', gsmId: '', proportionId: '', accessoryId: '', paperSubtype: '', variant: '', variantFilter: '', variantTab: '', quantity: '', extraSheets: '', costPerUnit: '' }
+  return { id: uuid(), category: 'PAPER', brandId: '', gsmId: '', proportionId: '', accessoryId: '', paperSubtype: '', variant: '', variantFilter: '', variantTab: '', quantity: '', extraSheets: '', costPerUnit: '', extraCostPerUnit: '' }
 }
 
 /** Compute effective units (reams/packets) from quantity + extra sheets */
@@ -222,6 +222,7 @@ export function PurchasesPage() {
         return sheets > 0 ? String(sheets) : ''
       })(),
       costPerUnit: String(poishaToBdt(p.cost_per_ream_poisha)),
+      extraCostPerUnit: p.extra_cost_per_unit_poisha ? String(poishaToBdt(p.extra_cost_per_unit_poisha)) : '',
     }])
     setOpen(true)
   }
@@ -304,11 +305,12 @@ export function PurchasesPage() {
 
         const qty = effectiveQty(line, spu)
         const costPoisha = bdtToPoisha(parseFloat(line.costPerUnit))
+        const extraCostPoisha = line.extraCostPerUnit ? bdtToPoisha(parseFloat(line.extraCostPerUnit)) : 0
         const quantitySheets = Math.round(qty * spu)
 
         await dbTransaction([
-          { sql: `UPDATE purchases SET paper_type_id = ?, accessory_id = ?, category = ?, purchase_date = ?, quantity_reams = ?, cost_per_ream_poisha = ?, total_cost_poisha = ?, supplier_id = ?, supplier_name = ?, notes = ? WHERE id = ?`,
-            params: [paperTypeId, accessoryId, cat, purchaseDate, qty, costPoisha, Math.round(qty * costPoisha), supplierId || null, null, notes.trim() || null, editingPurchase.id] },
+          { sql: `UPDATE purchases SET paper_type_id = ?, accessory_id = ?, category = ?, purchase_date = ?, quantity_reams = ?, cost_per_ream_poisha = ?, extra_cost_per_unit_poisha = ?, total_cost_poisha = ?, supplier_id = ?, supplier_name = ?, notes = ? WHERE id = ?`,
+            params: [paperTypeId, accessoryId, cat, purchaseDate, qty, costPoisha, extraCostPoisha, Math.round(qty * (costPoisha + extraCostPoisha)), supplierId || null, null, notes.trim() || null, editingPurchase.id] },
           { sql: `UPDATE stock_ledger SET paper_type_id = ?, accessory_id = ?, quantity_sheets = ? WHERE reference_id = ? AND transaction_type = 'PURCHASE'`,
             params: [paperTypeId, accessoryId, quantitySheets, editingPurchase.id] },
         ])
@@ -332,12 +334,13 @@ export function PurchasesPage() {
 
           const qty = effectiveQty(line, spu)
           const costPoisha = bdtToPoisha(parseFloat(line.costPerUnit))
+          const extraCostPoisha = line.extraCostPerUnit ? bdtToPoisha(parseFloat(line.extraCostPerUnit)) : 0
           const quantitySheets = Math.round(qty * spu)
           const purchaseId = uuid()
 
           statements.push({
-            sql: `INSERT INTO purchases (id, paper_type_id, accessory_id, category, purchase_date, quantity_reams, cost_per_ream_poisha, total_cost_poisha, supplier_id, supplier_name, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            params: [purchaseId, paperTypeId, accessoryId, cat, purchaseDate, qty, costPoisha, Math.round(qty * costPoisha), supplierId || null, null, notes.trim() || null, now],
+            sql: `INSERT INTO purchases (id, paper_type_id, accessory_id, category, purchase_date, quantity_reams, cost_per_ream_poisha, extra_cost_per_unit_poisha, total_cost_poisha, supplier_id, supplier_name, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            params: [purchaseId, paperTypeId, accessoryId, cat, purchaseDate, qty, costPoisha, extraCostPoisha, Math.round(qty * (costPoisha + extraCostPoisha)), supplierId || null, null, notes.trim() || null, now],
           })
           statements.push({
             sql: `INSERT INTO stock_ledger (id, paper_type_id, accessory_id, transaction_type, quantity_sheets, reference_id, created_at) VALUES (?, ?, ?, 'PURCHASE', ?, ?, ?)`,
@@ -493,6 +496,7 @@ export function PurchasesPage() {
               const uLblP = isPacket ? 'packets' : unitLabelPlural(cat)
               const qty = isPacket ? (parseFloat(line.quantity) || 0) : effectiveQty(line, spu)
               const cost = parseFloat(line.costPerUnit) || 0
+              const extraCost = parseFloat(line.extraCostPerUnit) || 0
               const isExpanded = expandedLineId === line.id
 
               // Build compact summary label for collapsed view
@@ -519,7 +523,7 @@ export function PurchasesPage() {
                       <span className="text-xs font-semibold text-muted-foreground w-5">#{idx + 1}</span>
                       <span className="text-sm font-medium flex-1 truncate">{summaryLabel}</span>
                       {totalSheets > 0 && <span className="text-xs tabular-nums text-muted-foreground">{totalSheets.toLocaleString()} sheets</span>}
-                      {cost > 0 && qty > 0 && <span className="text-xs tabular-nums font-medium">{formatBDT(bdtToPoisha(cost * qty))}</span>}
+                      {cost > 0 && qty > 0 && <span className="text-xs tabular-nums font-medium">{formatBDT(bdtToPoisha((cost + extraCost) * qty))}</span>}
                       {lines.length > 1 && (
                         <button className="text-muted-foreground hover:text-destructive text-lg leading-none ml-1" onClick={e => { e.stopPropagation(); removeLine(line.id) }}>×</button>
                       )}
@@ -655,7 +659,7 @@ export function PurchasesPage() {
                     )}
 
                     {/* Qty + Cost */}
-                    <div className={`grid gap-3 ${cat !== 'ACCESSORY' && !isPacket ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                    <div className={`grid gap-3 ${cat !== 'ACCESSORY' && !isPacket ? 'grid-cols-4' : 'grid-cols-3'}`}>
                       <div className="grid gap-1">
                         <Label className="text-xs">Qty ({uLblP})</Label>
                         <Input className="h-8" type="number" min="0" step="1" value={line.quantity} onChange={e => updateLine(line.id, { quantity: e.target.value })} />
@@ -669,6 +673,10 @@ export function PurchasesPage() {
                       <div className="grid gap-1">
                         <Label className="text-xs">Cost/{uLbl} (BDT)</Label>
                         <Input className="h-8" type="number" min="0.01" step="0.01" value={line.costPerUnit} onChange={e => updateLine(line.id, { costPerUnit: e.target.value })} />
+                      </div>
+                      <div className="grid gap-1">
+                        <Label className="text-xs">Extra cost/{uLbl}</Label>
+                        <Input className="h-8" type="number" min="0" step="0.01" placeholder="0" value={line.extraCostPerUnit} onChange={e => updateLine(line.id, { extraCostPerUnit: e.target.value })} />
                       </div>
                     </div>
 
@@ -695,9 +703,15 @@ export function PurchasesPage() {
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span>Total: <span className="font-medium text-foreground">{formatBDT(bdtToPoisha(cost * qty))}</span></span>
+                          <span>Supplier Due: <span className="font-medium text-foreground">{formatBDT(bdtToPoisha(cost * qty))}</span></span>
                           <span>{Math.round(qty * spu).toLocaleString()} {isPacket ? 'packets' : 'sheets'}</span>
                         </div>
+                        {extraCost > 0 && (
+                          <div className="flex justify-between">
+                            <span>Total (with extra): <span className="font-medium text-foreground">{formatBDT(bdtToPoisha((cost + extraCost) * qty))}</span></span>
+                            <span className="text-muted-foreground">+{formatBDT(bdtToPoisha(extraCost))}/{uLbl} extra</span>
+                          </div>
+                        )}
                       </div>
                     )}
                   </CardContent>
@@ -777,8 +791,8 @@ export function PurchasesPage() {
                       })()}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{p.quantity_reams} {unitLabelPlural(pCat)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatBDT(p.cost_per_ream_poisha)}</TableCell>
-                    <TableCell className="text-right tabular-nums font-medium">{formatBDT(p.cost_per_ream_poisha * p.quantity_reams)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatBDT(p.cost_per_ream_poisha)}{p.extra_cost_per_unit_poisha > 0 ? <span className="text-muted-foreground"> +{formatBDT(p.extra_cost_per_unit_poisha)}</span> : ''}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">{formatBDT(Math.round((p.cost_per_ream_poisha + p.extra_cost_per_unit_poisha) * p.quantity_reams))}</TableCell>
                     <TableCell className="text-muted-foreground">{p.display_supplier_name ?? '—'}</TableCell>
                     <TableCell>
                       <div className="flex gap-2">

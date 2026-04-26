@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { v4 as uuid } from 'uuid'
 import { useQuery } from '@/hooks/useQuery'
 import { dbRun } from '@/lib/ipc'
@@ -36,15 +36,13 @@ HAVING total_sheets > 0
 ORDER BY pt.category, b.name, g.value
 `
 
-const AVG_COST_SQL = `
-SELECT
-  paper_type_id,
-  CASE WHEN SUM(quantity_reams) > 0
-    THEN SUM(cost_per_ream_poisha * quantity_reams) / SUM(quantity_reams)
-    ELSE 0
-  END as avg_cost_poisha
-FROM purchases
-GROUP BY paper_type_id
+// Fetch full stock_ledger with purchase costs for running average computation
+const LEDGER_COST_SQL = `
+SELECT sl.paper_type_id, sl.accessory_id, sl.quantity_sheets, sl.transaction_type,
+  p.total_cost_poisha as purchase_total_cost
+FROM stock_ledger sl
+LEFT JOIN purchases p ON sl.reference_id = p.id AND sl.transaction_type = 'PURCHASE'
+ORDER BY datetime(sl.created_at) ASC, sl.rowid ASC
 `
 
 const ACCESSORY_STOCK_SQL = `
@@ -62,18 +60,6 @@ HAVING total_pieces > 0
 ORDER BY at.name, b.name
 `
 
-const ACCESSORY_COST_SQL = `
-SELECT
-  accessory_id,
-  CASE WHEN SUM(quantity_reams) > 0
-    THEN SUM(cost_per_ream_poisha * quantity_reams) / SUM(quantity_reams)
-    ELSE 0
-  END as avg_cost_poisha
-FROM purchases
-WHERE accessory_id IS NOT NULL
-GROUP BY accessory_id
-`
-
 interface StockRow {
   paper_type_id: string
   category: Category
@@ -85,20 +71,18 @@ interface StockRow {
   total_sheets: number
 }
 
-interface AvgCostRow {
-  paper_type_id: string
-  avg_cost_poisha: number
+interface LedgerCostRow {
+  paper_type_id: string | null
+  accessory_id: string | null
+  quantity_sheets: number
+  transaction_type: string
+  purchase_total_cost: number | null
 }
 
 interface AccessoryStockRow {
   accessory_id: string
   accessory_name: string
   total_pieces: number
-}
-
-interface AccessoryCostRow {
-  accessory_id: string
-  avg_cost_poisha: number
 }
 
 interface MonthlyPurchaseRow {
@@ -120,6 +104,48 @@ const TOTAL_PURCHASES_SQL = `
 SELECT COALESCE(SUM(total_cost_poisha), 0) as total FROM purchases
 `
 
+/**
+ * Compute running weighted-average cost per sheet by replaying the stock_ledger chronologically.
+ * When stock hits 0, the average resets — only "current era" purchases count.
+ */
+function computeRunningAvgCost(
+  rows: LedgerCostRow[],
+  getKey: (r: LedgerCostRow) => string | null
+): Map<string, number> {
+  const grouped = new Map<string, LedgerCostRow[]>()
+  for (const row of rows) {
+    const key = getKey(row)
+    if (!key) continue
+    const arr = grouped.get(key) || []
+    arr.push(row)
+    grouped.set(key, arr)
+  }
+
+  const result = new Map<string, number>()
+  for (const [key, entries] of grouped) {
+    let stock = 0
+    let avgCost = 0 // per sheet/piece
+
+    for (const e of entries) {
+      if (e.transaction_type === 'PURCHASE' && e.purchase_total_cost != null && e.quantity_sheets > 0) {
+        const costPerSheet = e.purchase_total_cost / e.quantity_sheets
+        if (stock <= 0) {
+          avgCost = costPerSheet
+        } else {
+          avgCost = (stock * avgCost + e.quantity_sheets * costPerSheet) / (stock + e.quantity_sheets)
+        }
+        stock += e.quantity_sheets
+      } else {
+        stock += e.quantity_sheets // negative for outgoing
+        if (stock <= 0) { stock = 0; avgCost = 0 }
+      }
+    }
+
+    result.set(key, avgCost)
+  }
+  return result
+}
+
 export function GodownPage() {
   const { addToast } = useToast()
   const [filter, setFilter] = useState('')
@@ -127,20 +153,17 @@ export function GodownPage() {
   const [deleteTarget, setDeleteTarget] = useState<{ type: 'paper'; id: string; label: string; sheets: number } | { type: 'accessory'; id: string; label: string; pieces: number } | null>(null)
   const [deleting, setDeleting] = useState(false)
   const { data: stockRows, loading: stockLoading, error: stockError, refetch: refetchStock } = useQuery<StockRow>(STOCK_SQL)
-  const { data: costRows, loading: costLoading, error: costError } = useQuery<AvgCostRow>(AVG_COST_SQL)
+  const { data: ledgerRows, loading: ledgerLoading, error: ledgerError } = useQuery<LedgerCostRow>(LEDGER_COST_SQL)
   const { data: accessoryStockRows, loading: accStockLoading, error: accStockError, refetch: refetchAccStock } = useQuery<AccessoryStockRow>(ACCESSORY_STOCK_SQL)
-  const { data: accessoryCostRows, loading: accCostLoading, error: accCostError } = useQuery<AccessoryCostRow>(ACCESSORY_COST_SQL)
   const { data: monthlyPurchases } = useQuery<MonthlyPurchaseRow>(MONTHLY_PURCHASES_SQL)
   const { data: totalPurchasesRows } = useQuery<{ total: number }>(TOTAL_PURCHASES_SQL)
 
-  const loading = stockLoading || costLoading || accStockLoading || accCostLoading
-  const error = stockError || costError || accStockError || accCostError
+  const loading = stockLoading || ledgerLoading || accStockLoading
+  const error = stockError || ledgerError || accStockError
 
-  const costMap = new Map<string, number>()
-  for (const row of costRows) costMap.set(row.paper_type_id, row.avg_cost_poisha)
-
-  const accCostMap = new Map<string, number>()
-  for (const row of accessoryCostRows) accCostMap.set(row.accessory_id, row.avg_cost_poisha)
+  // Running average cost per sheet for paper types, and per piece for accessories
+  const costMap = useMemo(() => computeRunningAvgCost(ledgerRows, r => r.paper_type_id), [ledgerRows])
+  const accCostMap = useMemo(() => computeRunningAvgCost(ledgerRows, r => r.accessory_id), [ledgerRows])
 
   const filteredRows = stockRows
     .filter(row => viewCategory === 'ALL' || row.category === viewCategory)
@@ -180,17 +203,13 @@ export function GodownPage() {
 
   // Investment calculations — current godown stock value
   const paperInvestment = stockRows.reduce((sum, row) => {
-    const cat = (row.category || 'PAPER') as Category
-    const isPacket = isPacketVariant(row.variant)
-    const spu = isPacket ? 1 : sheetsPerUnit(cat)
-    const units = Number(row.total_sheets) / spu
-    const avgCost = costMap.get(row.paper_type_id) ?? 0
-    return sum + Math.round(avgCost * units)
+    const avgCostPerSheet = costMap.get(row.paper_type_id) ?? 0
+    return sum + Math.round(avgCostPerSheet * Number(row.total_sheets))
   }, 0)
 
   const accessoryInvestment = accessoryStockRows.reduce((sum, row) => {
-    const avgCost = accCostMap.get(row.accessory_id) ?? 0
-    return sum + Math.round(avgCost * Number(row.total_pieces))
+    const avgCostPerPiece = accCostMap.get(row.accessory_id) ?? 0
+    return sum + Math.round(avgCostPerPiece * Number(row.total_pieces))
   }, 0)
 
   const totalGodownInvestment = paperInvestment + accessoryInvestment
@@ -200,11 +219,8 @@ export function GodownPage() {
   const categoryTotals = new Map<string, number>()
   for (const row of stockRows) {
     const cat = (row.category || 'PAPER') as Category
-    const isPacket = isPacketVariant(row.variant)
-    const spu = isPacket ? 1 : sheetsPerUnit(cat)
-    const units = Number(row.total_sheets) / spu
-    const avgCost = costMap.get(row.paper_type_id) ?? 0
-    const value = Math.round(avgCost * units)
+    const avgCostPerSheet = costMap.get(row.paper_type_id) ?? 0
+    const value = Math.round(avgCostPerSheet * Number(row.total_sheets))
     categoryTotals.set(cat, (categoryTotals.get(cat) ?? 0) + value)
   }
   if (accessoryInvestment > 0) {
@@ -307,8 +323,9 @@ export function GodownPage() {
                 const spu = isPacket ? 1 : sheetsPerUnit(cat)
                 const totalSheets = Number(row.total_sheets)
                 const units = totalSheets / spu
-                const avgCostPoisha = costMap.get(row.paper_type_id) ?? 0
-                const totalValuePoisha = Math.round(avgCostPoisha * units)
+                const avgCostPerSheet = costMap.get(row.paper_type_id) ?? 0
+                const avgCostPerUnit = Math.round(avgCostPerSheet * spu)
+                const totalValuePoisha = Math.round(avgCostPerSheet * totalSheets)
                 const isLow = units < LOW_STOCK_THRESHOLD
 
                 return (
@@ -332,13 +349,13 @@ export function GodownPage() {
                       {isPacket ? <span className="text-muted-foreground">—</span> : formatNumber(totalSheets)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {avgCostPoisha > 0 ? formatBDT(avgCostPoisha) : <span className="text-muted-foreground">—</span>}
+                      {avgCostPerUnit > 0 ? formatBDT(avgCostPerUnit) : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {isPacket ? <span className="text-muted-foreground">—</span> : avgCostPoisha > 0 ? formatBDT(Math.round(avgCostPoisha / spu)) : <span className="text-muted-foreground">—</span>}
+                      {isPacket ? <span className="text-muted-foreground">—</span> : avgCostPerSheet > 0 ? formatBDT(Math.round(avgCostPerSheet)) : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {avgCostPoisha > 0 ? formatBDT(totalValuePoisha) : <span className="text-muted-foreground">—</span>}
+                      {avgCostPerSheet > 0 ? formatBDT(totalValuePoisha) : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell>
                       {isLow ? <Badge variant="destructive">Low</Badge> : <Badge variant="secondary">OK</Badge>}
@@ -354,8 +371,8 @@ export function GodownPage() {
               })}
               {showAccessoryRows && filteredAccessoryRows.map((row) => {
                 const totalPieces = Number(row.total_pieces)
-                const avgCostPoisha = accCostMap.get(row.accessory_id) ?? 0
-                const totalValuePoisha = Math.round(avgCostPoisha * totalPieces)
+                const avgCostPerPiece = accCostMap.get(row.accessory_id) ?? 0
+                const totalValuePoisha = Math.round(avgCostPerPiece * totalPieces)
                 const isLow = totalPieces < LOW_STOCK_THRESHOLD
 
                 return (
@@ -371,13 +388,13 @@ export function GodownPage() {
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{formatNumber(totalPieces)}</TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {avgCostPoisha > 0 ? formatBDT(avgCostPoisha) : <span className="text-muted-foreground">—</span>}
+                      {avgCostPerPiece > 0 ? formatBDT(Math.round(avgCostPerPiece)) : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {avgCostPoisha > 0 ? formatBDT(avgCostPoisha) : <span className="text-muted-foreground">—</span>}
+                      {avgCostPerPiece > 0 ? formatBDT(Math.round(avgCostPerPiece)) : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {avgCostPoisha > 0 ? formatBDT(totalValuePoisha) : <span className="text-muted-foreground">—</span>}
+                      {avgCostPerPiece > 0 ? formatBDT(totalValuePoisha) : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell>
                       {isLow ? <Badge variant="destructive">Low</Badge> : <Badge variant="secondary">OK</Badge>}

@@ -60,7 +60,7 @@ interface SupplierPayment {
 const SUPPLIER_SQL = `
   SELECT s.*,
     s.previous_outstanding_poisha +
-    COALESCE((SELECT SUM(total_cost_poisha) FROM purchases WHERE supplier_id = s.id), 0) -
+    COALESCE((SELECT SUM(CAST(cost_per_ream_poisha AS REAL) * quantity_reams) FROM purchases WHERE supplier_id = s.id), 0) -
     COALESCE((SELECT SUM(amount_poisha) FROM supplier_payments WHERE supplier_id = s.id), 0) as due_poisha
   FROM suppliers s ORDER BY s.name
 `;
