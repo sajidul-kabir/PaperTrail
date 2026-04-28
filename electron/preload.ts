@@ -11,4 +11,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   backupRestore: (fileName: string) => ipcRenderer.invoke('backup:restore', fileName),
   backupPickFolder: () => ipcRenderer.invoke('backup:pickFolder'),
   backupRestoreFromFile: () => ipcRenderer.invoke('backup:restoreFromFile'),
+  factoryReset: () => ipcRenderer.invoke('db:factoryReset'),
 })

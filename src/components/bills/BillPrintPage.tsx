@@ -361,7 +361,7 @@ export function BillPrintPage() {
                               textAlign: "right",
                             }}
                           >
-                            Subtotal
+                            G. Total
                           </td>
                           <td
                             style={{

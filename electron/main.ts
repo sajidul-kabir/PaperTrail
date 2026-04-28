@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { autoUpdater } from 'electron-updater'
-import { initDatabase, getDb } from './database/db'
+import { initDatabase, getDb, closeDatabase, getDbPath } from './database/db'
 import { runBackup, getBackupInfo, setCloudBackupPath, restoreFromBackup, restoreFromFile, scheduleBackupAfterWrite, stopBackupTimer } from './backup'
 
 // Global error handlers — log and show dialog so crashes aren't silent
@@ -142,6 +142,25 @@ function registerIpcHandlers() {
       const results = transaction()
       scheduleBackupAfterWrite()
       return { success: true, data: results }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // Factory reset — delete DB file and recreate from scratch
+  ipcMain.handle('db:factoryReset', async () => {
+    try {
+      const dbPath = getDbPath()
+      closeDatabase()
+      // Delete DB and WAL/SHM files
+      for (const ext of ['', '-wal', '-shm']) {
+        const f = dbPath + ext
+        if (fs.existsSync(f)) fs.unlinkSync(f)
+      }
+      // Recreate fresh DB with all migrations
+      initDatabase()
+      if (win) win.reload()
+      return { success: true }
     } catch (err: any) {
       return { success: false, error: err.message }
     }

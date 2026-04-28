@@ -1,8 +1,8 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { v4 as uuid } from 'uuid'
 import { useQuery } from '@/hooks/useQuery'
-import { dbQuery, dbTransaction } from '@/lib/ipc'
+import { dbQuery, dbRun, dbTransaction } from '@/lib/ipc'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { DatePicker } from '@/components/ui/date-picker'
@@ -12,9 +12,11 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/toast'
 import { piecesPerSheet } from '@/lib/calculations'
-import { paperDisplayType, isPacketVariant } from '@/lib/paper-type'
+import { paperDisplayType, isPacketVariant, sheetsPerUnit } from '@/lib/paper-type'
 import type { Category } from '@/lib/paper-type'
 import { formatBDT, formatNumber, todayISO, bdtToPoisha, profitColor, paperTypeLabel, poishaToBdt } from '@/lib/utils'
+import { LEDGER_COST_SQL, computeRunningAvgCost } from '@/lib/costs'
+import type { LedgerCostRow } from '@/lib/costs'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,8 +39,6 @@ interface AccessoryItem {
   total_pieces: number
 }
 
-interface CostRow { paper_type_id: string; avg_cost_per_sheet_poisha: number; avg_cost_per_ream_poisha: number; category: string }
-interface AccessoryCostRow { accessory_id: string; avg_cost_poisha: number }
 
 interface LineItem {
   id: string
@@ -89,32 +89,6 @@ const ACCESSORY_GODOWN_SQL = `
   ORDER BY at.name, b.name
 `
 
-const COSTS_SQL = `
-  SELECT pu.paper_type_id, pt.category,
-    CASE WHEN SUM(pu.quantity_reams) > 0
-      THEN SUM(pu.cost_per_ream_poisha * pu.quantity_reams) / SUM(pu.quantity_reams)
-           / CASE WHEN pt.category IN ('CARD','STICKER') THEN 100 ELSE 500 END
-      ELSE 0
-    END AS avg_cost_per_sheet_poisha,
-    CASE WHEN SUM(pu.quantity_reams) > 0
-      THEN SUM(pu.cost_per_ream_poisha * pu.quantity_reams) / SUM(pu.quantity_reams)
-      ELSE 0
-    END AS avg_cost_per_ream_poisha
-  FROM purchases pu
-  JOIN paper_types pt ON pt.id = pu.paper_type_id
-  WHERE pu.paper_type_id IS NOT NULL
-  GROUP BY pu.paper_type_id
-`
-
-const ACCESSORY_COSTS_SQL = `
-  SELECT accessory_id,
-    CASE WHEN SUM(quantity_reams) > 0
-      THEN SUM(cost_per_ream_poisha * quantity_reams) / SUM(quantity_reams)
-      ELSE 0
-    END as avg_cost_poisha
-  FROM purchases WHERE accessory_id IS NOT NULL
-  GROUP BY accessory_id
-`
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -176,11 +150,10 @@ export function NewOrderPage() {
   const [saving, setSaving] = useState(false)
   const [editLoaded, setEditLoaded] = useState(false)
 
-  const { data: customers, loading: customersLoading } = useQuery<CustomerRow>(CUSTOMERS_SQL, [], [])
+  const { data: customers, loading: customersLoading, refetch: refetchCustomers } = useQuery<CustomerRow>(CUSTOMERS_SQL, [], [])
   const { data: godownItems } = useQuery<GodownItem>(GODOWN_SQL, [], [])
   const { data: accessoryItems } = useQuery<AccessoryItem>(ACCESSORY_GODOWN_SQL, [], [])
-  const { data: costRows } = useQuery<CostRow>(COSTS_SQL, [], [])
-  const { data: accCostRows } = useQuery<AccessoryCostRow>(ACCESSORY_COSTS_SQL, [], [])
+  const { data: ledgerRows } = useQuery<LedgerCostRow>(LEDGER_COST_SQL, [], [])
 
   // Load existing order data in edit mode
   useEffect(() => {
@@ -272,10 +245,9 @@ export function NewOrderPage() {
 
   const godownMap = new Map(godownItems.map(i => [i.paper_type_id, i]))
   const accMap = new Map(accessoryItems.map(a => [a.accessory_id, a]))
-  const costMap = new Map(costRows.map(c => [c.paper_type_id, c.avg_cost_per_sheet_poisha]))
-  const reamCostMap = new Map(costRows.map(c => [c.paper_type_id, c.avg_cost_per_ream_poisha]))
-  const costCatMap = new Map(costRows.map(c => [c.paper_type_id, c.category]))
-  const accCostMap = new Map(accCostRows.map(c => [c.accessory_id, c.avg_cost_poisha]))
+  // Cost per sheet from running weighted average (same as godown)
+  const costMap = useMemo(() => computeRunningAvgCost(ledgerRows, r => r.paper_type_id), [ledgerRows])
+  const accCostMap = useMemo(() => computeRunningAvgCost(ledgerRows, r => r.accessory_id), [ledgerRows])
 
   // Compute sheets consumed by a single line (for availability tracking)
   function calcSheetsForLine(l: LineItem): number {
@@ -361,7 +333,7 @@ export function NewOrderPage() {
       const sheets = totalPieces // packets = stock units
       const rawTotal = totalPieces * pricePoisha
       const lineTotal = line.totalOverride ? bdtToPoisha(parseNum(line.totalOverride)) : price > 0 ? Math.ceil(rawTotal / 100) * 100 : 0
-      const costPerPacket = reamCostMap.get(line.paper_type_id) ?? 0
+      const costPerPacket = costMap.get(line.paper_type_id) ?? 0  // costMap stores per-sheet, packet spu=1 so per-sheet = per-packet
       const costTotal = Math.round(sheets * costPerPacket)
       const profit = lineTotal - costTotal
       const margin = lineTotal > 0 ? (profit / lineTotal) * 100 : 0
@@ -433,6 +405,25 @@ export function NewOrderPage() {
   const filteredCustomers = customerFilter
     ? customers.filter(c => customerDisplayName(c).toLowerCase().includes(customerFilter.toLowerCase()) || c.name.toLowerCase().includes(customerFilter.toLowerCase()))
     : customers
+  const showCreateCustomer = customerFilter.trim().length > 0 && filteredCustomers.length === 0
+
+  async function handleCreateCustomer() {
+    const name = customerFilter.trim()
+    if (!name) return
+    const id = uuid()
+    try {
+      await dbRun(
+        `INSERT INTO customers (id, name, organization, phone, address) VALUES (?, ?, ?, NULL, NULL)`,
+        [id, name, name]
+      )
+      setCustomerId(id)
+      setCustomerFilter('')
+      refetchCustomers()
+      addToast({ title: 'Customer created', description: name })
+    } catch (err: any) {
+      addToast({ title: 'Failed', description: err.message, variant: 'destructive' })
+    }
+  }
 
   // Combined dropdown items
   type DropdownItem = { type: 'item'; data: GodownItem } | { type: 'accessory'; data: AccessoryItem }
@@ -593,10 +584,19 @@ export function NewOrderPage() {
                   <SelectContent className="max-h-60" header={
                     <Input placeholder="Search customers..." value={customerFilter}
                       onChange={e => setCustomerFilter(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && showCreateCustomer) { e.preventDefault(); e.stopPropagation(); handleCreateCustomer() } }}
                       className="h-8 text-sm" />
                   }>
-                    {filteredCustomers.length === 0 ? <div className="py-3 text-center text-sm text-muted-foreground">No customers found</div>
-                     : filteredCustomers.map(c => (
+                    {showCreateCustomer ? (
+                      <div className="py-2 px-3 text-center">
+                        <button type="button" className="text-sm text-primary font-medium hover:underline focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 rounded px-2 py-1"
+                          tabIndex={0}
+                          onPointerDown={e => { e.preventDefault(); e.stopPropagation(); handleCreateCustomer() }}
+                          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCreateCustomer() } }}>
+                          + Create "{customerFilter.trim()}"
+                        </button>
+                      </div>
+                    ) : filteredCustomers.map(c => (
                       <SelectItem key={c.id} value={c.id}>
                         {c.organization ? <>{c.organization} <span className="text-muted-foreground text-xs">({c.name})</span></> : c.name}
                       </SelectItem>
@@ -660,19 +660,15 @@ export function NewOrderPage() {
                       {isAcc ? selectedAcc?.accessory_name : (selectedItem ? itemLabel(selectedItem) : '')}
                     </span>
                     {!isAcc && selectedItem && (() => {
-                      if (isPacketItem) {
-                        const cpr = reamCostMap.get(line.paper_type_id) ?? 0
-                        if (cpr <= 0) return <span className="text-xs text-muted-foreground">(no cost)</span>
-                        return <span className="text-xs text-muted-foreground">(৳{(cpr / 100).toFixed(2)}/packet)</span>
-                      }
-                      const isPaper = selectedItem.category === 'PAPER'
-                      if (isPaper) {
-                        const cpr = reamCostMap.get(line.paper_type_id) ?? 0
-                        if (cpr <= 0) return <span className="text-xs text-muted-foreground">(no cost)</span>
-                        return <span className="text-xs text-muted-foreground">(৳{(cpr / 100).toFixed(2)}/ream)</span>
-                      }
                       const cps = costMap.get(line.paper_type_id) ?? 0
                       if (cps <= 0) return <span className="text-xs text-muted-foreground">(no cost)</span>
+                      if (isPacketItem) {
+                        return <span className="text-xs text-muted-foreground">(৳{(cps / 100).toFixed(2)}/packet)</span>
+                      }
+                      if (selectedItem.category === 'PAPER') {
+                        const cpr = cps * 500
+                        return <span className="text-xs text-muted-foreground">(৳{(cpr / 100).toFixed(2)}/ream)</span>
+                      }
                       return <span className="text-xs text-muted-foreground">(৳{(cps / 100).toFixed(2)}/sheet)</span>
                     })()}
                     {isAcc && selectedAcc && (() => {

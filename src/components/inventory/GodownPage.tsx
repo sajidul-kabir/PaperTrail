@@ -14,6 +14,8 @@ import { formatBDT, formatNumber, paperTypeLabel, formatSize } from '@/lib/utils
 import { cn } from '@/lib/utils'
 import { sheetsPerUnit, unitLabelPlural, paperDisplayType, isPacketVariant } from '@/lib/paper-type'
 import type { Category } from '@/lib/paper-type'
+import { LEDGER_COST_SQL, computeRunningAvgCost } from '@/lib/costs'
+import type { LedgerCostRow } from '@/lib/costs'
 
 const LOW_STOCK_THRESHOLD = 5
 
@@ -36,14 +38,7 @@ HAVING total_sheets > 0
 ORDER BY pt.category, b.name, g.value
 `
 
-// Fetch full stock_ledger with purchase costs for running average computation
-const LEDGER_COST_SQL = `
-SELECT sl.paper_type_id, sl.accessory_id, sl.quantity_sheets, sl.transaction_type,
-  p.total_cost_poisha as purchase_total_cost
-FROM stock_ledger sl
-LEFT JOIN purchases p ON sl.reference_id = p.id AND sl.transaction_type = 'PURCHASE'
-ORDER BY datetime(sl.created_at) ASC, sl.rowid ASC
-`
+// LEDGER_COST_SQL imported from @/lib/costs
 
 const ACCESSORY_STOCK_SQL = `
 SELECT
@@ -71,13 +66,7 @@ interface StockRow {
   total_sheets: number
 }
 
-interface LedgerCostRow {
-  paper_type_id: string | null
-  accessory_id: string | null
-  quantity_sheets: number
-  transaction_type: string
-  purchase_total_cost: number | null
-}
+// LedgerCostRow imported from @/lib/costs
 
 interface AccessoryStockRow {
   accessory_id: string
@@ -104,47 +93,7 @@ const TOTAL_PURCHASES_SQL = `
 SELECT COALESCE(SUM(total_cost_poisha), 0) as total FROM purchases
 `
 
-/**
- * Compute running weighted-average cost per sheet by replaying the stock_ledger chronologically.
- * When stock hits 0, the average resets — only "current era" purchases count.
- */
-function computeRunningAvgCost(
-  rows: LedgerCostRow[],
-  getKey: (r: LedgerCostRow) => string | null
-): Map<string, number> {
-  const grouped = new Map<string, LedgerCostRow[]>()
-  for (const row of rows) {
-    const key = getKey(row)
-    if (!key) continue
-    const arr = grouped.get(key) || []
-    arr.push(row)
-    grouped.set(key, arr)
-  }
-
-  const result = new Map<string, number>()
-  for (const [key, entries] of grouped) {
-    let stock = 0
-    let avgCost = 0 // per sheet/piece
-
-    for (const e of entries) {
-      if (e.transaction_type === 'PURCHASE' && e.purchase_total_cost != null && e.quantity_sheets > 0) {
-        const costPerSheet = e.purchase_total_cost / e.quantity_sheets
-        if (stock <= 0) {
-          avgCost = costPerSheet
-        } else {
-          avgCost = (stock * avgCost + e.quantity_sheets * costPerSheet) / (stock + e.quantity_sheets)
-        }
-        stock += e.quantity_sheets
-      } else {
-        stock += e.quantity_sheets // negative for outgoing
-        if (stock <= 0) { stock = 0; avgCost = 0 }
-      }
-    }
-
-    result.set(key, avgCost)
-  }
-  return result
-}
+// computeRunningAvgCost imported from @/lib/costs
 
 export function GodownPage() {
   const { addToast } = useToast()

@@ -13,6 +13,7 @@ declare global {
       backupRestore: (fileName: string) => Promise<{ success: boolean; error?: string }>
       backupPickFolder: () => Promise<{ success: boolean; data?: string | null; error?: string }>
       backupRestoreFromFile: () => Promise<{ success: boolean; error?: string }>
+      factoryReset: () => Promise<{ success: boolean; error?: string }>
     }
   }
 }

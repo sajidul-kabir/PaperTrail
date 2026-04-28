@@ -10,8 +10,20 @@ export function getDb(): Database.Database {
   return db
 }
 
+export function getDbPath(): string {
+  return path.join(app.getPath('userData'), 'papertrail.db')
+}
+
+export function closeDatabase() {
+  if (db) {
+    try { db.pragma('wal_checkpoint(TRUNCATE)') } catch { /* ignore */ }
+    try { db.close() } catch { /* ignore */ }
+    db = null
+  }
+}
+
 export function initDatabase() {
-  const dbPath = path.join(app.getPath('userData'), 'papertrail.db')
+  const dbPath = getDbPath()
   db = new Database(dbPath)
   db.pragma('journal_mode = WAL')
   // Run migrations with FK off (table recreation needs it), then enable

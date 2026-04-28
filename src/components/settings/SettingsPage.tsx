@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/toast'
+import { dbTransaction } from '@/lib/ipc'
 import { formatDate } from '@/lib/utils'
 
 interface BackupInfo {
@@ -25,6 +29,62 @@ export function SettingsPage() {
   const [backing, setBacking] = useState(false)
   const [picking, setPicking] = useState(false)
   const [restoring, setRestoring] = useState(false)
+  const [resetOpen, setResetOpen] = useState(false)
+  const [resetConfirm, setResetConfirm] = useState('')
+  const [resetting, setResetting] = useState(false)
+  const [factoryOpen, setFactoryOpen] = useState(false)
+  const [factoryConfirm, setFactoryConfirm] = useState('')
+  const [factoryResetting, setFactoryResetting] = useState(false)
+
+  async function handleResetDatabase() {
+    if (resetConfirm !== 'delete') return
+    setResetting(true)
+    try {
+      // Delete all data rows (FK order), keep schema + walk-in customer
+      await dbTransaction([
+        { sql: 'DELETE FROM invoice_lines' },
+        { sql: 'DELETE FROM order_lines' },
+        { sql: 'DELETE FROM transfer_lines' },
+        { sql: 'DELETE FROM cutting_stock' },
+        { sql: 'DELETE FROM stock_ledger' },
+        { sql: 'DELETE FROM supplier_payments' },
+        { sql: 'DELETE FROM payments' },
+        { sql: 'DELETE FROM invoices' },
+        { sql: 'DELETE FROM orders' },
+        { sql: 'DELETE FROM transfers' },
+        { sql: 'DELETE FROM purchases' },
+        { sql: 'DELETE FROM accessories' },
+        { sql: 'DELETE FROM accessory_types' },
+        { sql: 'DELETE FROM paper_types' },
+        { sql: 'DELETE FROM proportions' },
+        { sql: 'DELETE FROM gsm_options' },
+        { sql: 'DELETE FROM brands' },
+        { sql: 'DELETE FROM suppliers' },
+        { sql: `DELETE FROM customers WHERE is_walk_in = 0` },
+        { sql: `UPDATE customers SET previous_balance_poisha = 0 WHERE is_walk_in = 1` },
+      ])
+      addToast({ title: 'Database reset', description: 'All data has been cleared. The app is now fresh.' })
+      setResetOpen(false)
+      setResetConfirm('')
+      setTimeout(() => window.location.reload(), 500)
+    } catch (err: any) {
+      addToast({ title: 'Reset failed', description: err.message, variant: 'destructive' })
+    } finally { setResetting(false) }
+  }
+
+  async function handleFactoryReset() {
+    if (factoryConfirm !== 'delete') return
+    setFactoryResetting(true)
+    try {
+      const result = await window.electronAPI.factoryReset()
+      if (!result.success) {
+        addToast({ title: 'Factory reset failed', description: result.error, variant: 'destructive' })
+      }
+      // App reloads automatically from main process
+    } catch (err: any) {
+      addToast({ title: 'Factory reset failed', description: err.message, variant: 'destructive' })
+    } finally { setFactoryResetting(false) }
+  }
 
   async function loadInfo() {
     setLoading(true)
@@ -249,6 +309,44 @@ export function SettingsPage() {
                 <Button size="sm" variant="outline" onClick={handleRestoreFromFile} disabled={restoring}>
                   {restoring ? 'Restoring...' : 'Choose File & Restore'}
                 </Button>
+              </div>
+            </CardContent>
+          </Card>
+          {/* Factory Reset */}
+          <Card className="border-destructive/50">
+            <CardHeader className="pb-2"><CardTitle className="text-destructive">Factory Reset</CardTitle></CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Deletes the entire database file and creates a brand new one. Use this if the app has issues like broken schema or failed migrations. This is the nuclear option — all data is permanently gone.
+                </p>
+                <Dialog open={factoryOpen} onOpenChange={v => { setFactoryOpen(v); if (!v) setFactoryConfirm('') }}>
+                  <DialogTrigger asChild>
+                    <Button variant="destructive" size="sm">Factory Reset</Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-sm">
+                    <DialogHeader><DialogTitle className="text-destructive">Factory Reset</DialogTitle></DialogHeader>
+                    <div className="flex flex-col gap-3 pt-2">
+                      <p className="text-sm text-muted-foreground">
+                        This will <span className="font-semibold text-destructive">delete the database file</span> and recreate it from scratch. All data, schema, and history will be permanently erased. The app will restart with a fresh database.
+                      </p>
+                      <p className="text-sm font-medium">Type <span className="font-mono text-destructive">delete</span> to confirm:</p>
+                      <Input
+                        value={factoryConfirm}
+                        onChange={e => setFactoryConfirm(e.target.value)}
+                        placeholder="Type 'delete' to confirm"
+                        className="font-mono"
+                        autoFocus
+                      />
+                      <div className="flex justify-end gap-2 pt-1">
+                        <Button variant="outline" size="sm" onClick={() => { setFactoryOpen(false); setFactoryConfirm('') }} disabled={factoryResetting}>Cancel</Button>
+                        <Button variant="destructive" size="sm" disabled={factoryConfirm !== 'delete' || factoryResetting} onClick={handleFactoryReset}>
+                          {factoryResetting ? 'Resetting...' : 'Factory Reset'}
+                        </Button>
+                      </div>
+                    </div>
+                  </DialogContent>
+                </Dialog>
               </div>
             </CardContent>
           </Card>

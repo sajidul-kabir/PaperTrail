@@ -235,7 +235,7 @@ export function MemoPage() {
                 <td className="amt" style={{ border: '1px solid #888' }}>{outstanding > 0 ? formatTaka(outstanding) : '—'}</td>
               </tr>
               <tr>
-                <td className="lbl" style={{ border: '1px solid #888' }}>Subtotal</td>
+                <td className="lbl" style={{ border: '1px solid #888' }}>G. Total</td>
                 <td className="amt" style={{ border: '1px solid #888', fontWeight: 700 }}>{formatTaka(grandTotal)}</td>
               </tr>
               <tr>
