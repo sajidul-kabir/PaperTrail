@@ -533,7 +533,7 @@ function GodownTab({ start, end }: { start: string; end: string }) {
       COALESCE(pt.variant, '') as variant,
       COALESCE(SUM(CASE WHEN sl.created_at < ? THEN sl.quantity_sheets ELSE 0 END), 0) as opening_sheets,
       COALESCE(SUM(CASE WHEN sl.created_at >= ? AND sl.created_at < ? AND sl.transaction_type = 'PURCHASE' THEN sl.quantity_sheets ELSE 0 END), 0) as purchased_sheets,
-      COALESCE(SUM(CASE WHEN sl.created_at >= ? AND sl.created_at < ? AND sl.transaction_type IN ('SALE', 'TRANSFER_OUT') THEN ABS(sl.quantity_sheets) ELSE 0 END), 0) as sold_sheets,
+      COALESCE(-SUM(CASE WHEN sl.created_at >= ? AND sl.created_at < ? AND sl.transaction_type != 'PURCHASE' THEN sl.quantity_sheets ELSE 0 END), 0) as sold_sheets,
       COALESCE(SUM(CASE WHEN sl.created_at < ? THEN sl.quantity_sheets ELSE 0 END), 0) as closing_sheets
     FROM stock_ledger sl
     LEFT JOIN paper_types pt ON sl.paper_type_id = pt.id
@@ -581,13 +581,14 @@ function GodownTab({ start, end }: { start: string; end: string }) {
                 <TableHead className="text-right">Opening (sheets)</TableHead>
                 <TableHead className="text-right">Purchased</TableHead>
                 <TableHead className="text-right">Sold</TableHead>
+                <TableHead className="text-right">Sold (sheets)</TableHead>
                 <TableHead className="text-right">Closing (units)</TableHead>
                 <TableHead className="text-right">Closing (sheets)</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 && (
-                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">No items found.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No items found.</TableCell></TableRow>
               )}
               {filtered.map(row => {
                 const cat = (row.category || 'PAPER') as Category
@@ -613,6 +614,7 @@ function GodownTab({ start, end }: { start: string; end: string }) {
                     <TableCell className="text-right tabular-nums text-sm">{fmtSheets(row.opening_sheets)}</TableCell>
                     <TableCell className="text-right tabular-nums text-sm text-blue-600">{fmtUnits(row.purchased_sheets)}</TableCell>
                     <TableCell className="text-right tabular-nums text-sm text-orange-600">{fmtUnits(row.sold_sheets)}</TableCell>
+                    <TableCell className="text-right tabular-nums text-sm text-orange-600">{fmtSheets(row.sold_sheets)}</TableCell>
                     <TableCell className="text-right tabular-nums text-sm font-semibold">{fmtUnits(row.closing_sheets)}</TableCell>
                     <TableCell className="text-right tabular-nums text-sm font-semibold">{fmtSheets(row.closing_sheets)}</TableCell>
                   </TableRow>
