@@ -98,9 +98,11 @@ export function BillsPage() {
       // Fetch outstanding balance
       const balanceRows = await dbQuery<{ outstanding: number }>(
         `SELECT
-          COALESCE((SELECT SUM(total_poisha) FROM invoices WHERE customer_id = ? AND status = 'ACTIVE'), 0) -
-          COALESCE((SELECT SUM(amount_poisha) FROM payments WHERE customer_id = ?), 0) as outstanding`,
-        [customer.customer_id, customer.customer_id]
+          COALESCE(c.previous_balance_poisha, 0) +
+          COALESCE((SELECT SUM(total_poisha) FROM invoices WHERE customer_id = c.id AND status = 'ACTIVE'), 0) -
+          COALESCE((SELECT SUM(amount_poisha) FROM payments WHERE customer_id = c.id), 0) as outstanding
+        FROM customers c WHERE c.id = ?`,
+        [customer.customer_id]
       )
       const outstanding = balanceRows[0]?.outstanding ?? 0
 

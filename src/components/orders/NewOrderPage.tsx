@@ -730,7 +730,7 @@ export function NewOrderPage() {
                               {i.category.charAt(0)}
                             </span>
                             <span>{itemLabel(i)}</span>
-                            <span className="text-muted-foreground text-xs ml-auto">{formatNumber(i.total_sheets)} sheets</span>
+                            <span className="text-muted-foreground text-xs ml-auto">{formatNumber(i.total_sheets)} {isPacketVariant(i.variant) ? 'packets' : 'sheets'}</span>
                           </div>
                         </SelectItem>
                       )
