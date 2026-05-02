@@ -1,6 +1,6 @@
 {
   "name": "papertrail",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Press & Paper Business Accounting App",
   "main": "dist-electron/main.js",
   "scripts": {
