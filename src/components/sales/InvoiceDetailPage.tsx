@@ -274,9 +274,11 @@ export function InvoiceDetailPage() {
     let outstanding = 0
     try {
       const rows = await dbQuery<{ bal: number }>(`
-        SELECT COALESCE(SUM(i.total_poisha), 0) - COALESCE((SELECT SUM(p.amount_poisha) FROM payments p WHERE p.customer_id = ?), 0) as bal
-        FROM invoices i WHERE i.customer_id = ? AND i.status = 'ACTIVE'
-      `, [invoice.customer_id, invoice.customer_id])
+        SELECT COALESCE(c.previous_balance_poisha, 0) +
+          COALESCE((SELECT SUM(i.total_poisha) FROM invoices i WHERE i.customer_id = c.id AND i.status = 'ACTIVE'), 0) -
+          COALESCE((SELECT SUM(p.amount_poisha) FROM payments p WHERE p.customer_id = c.id), 0) as bal
+        FROM customers c WHERE c.id = ?
+      `, [invoice.customer_id])
       outstanding = Math.max(0, (rows[0]?.bal ?? 0) - invoice.total_poisha)
     } catch { /* ignore */ }
 

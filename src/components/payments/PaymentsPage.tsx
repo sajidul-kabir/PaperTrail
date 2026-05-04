@@ -13,11 +13,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Calendar } from '@/components/ui/calendar'
 import * as Popover from '@radix-ui/react-popover'
 import { useToast } from '@/components/ui/toast'
-import { formatBDT, formatDate, bdtToPoisha, todayISO } from '@/lib/utils'
-import { ChevronLeft, ChevronRight, CalendarDays } from 'lucide-react'
+import { formatBDT, formatDate, bdtToPoisha, poishaToBdt, todayISO } from '@/lib/utils'
+import { ChevronLeft, ChevronRight, CalendarDays, Pencil, Trash2 } from 'lucide-react'
 
 interface PaymentRow {
   id: string
+  customer_id: string
   customer_name: string
   customer_organization: string | null
   amount_poisha: number
@@ -39,6 +40,8 @@ const METHOD_LABELS: Record<string, string> = {
   CASH: 'Cash', BANK_TRANSFER: 'Bank Transfer', CHECK: 'Check', OTHER: 'Other',
 }
 
+const ACTION_PASSWORD = 'sabiha123'
+
 function shiftDate(dateStr: string, days: number): string {
   const d = new Date(dateStr + 'T00:00:00')
   d.setDate(d.getDate() + days)
@@ -53,7 +56,7 @@ function isoToDate(s: string): Date {
 }
 
 const PAYMENTS_SQL = `
-  SELECT p.id, p.amount_poisha, p.payment_date, p.payment_method, p.notes,
+  SELECT p.id, p.customer_id, p.amount_poisha, p.payment_date, p.payment_method, p.notes,
     c.name as customer_name, c.organization as customer_organization
   FROM payments p
   JOIN customers c ON p.customer_id = c.id
@@ -67,6 +70,31 @@ const SUMMARY_SQL = `
     COUNT(*) as day_count
   FROM payments WHERE payment_date = ?
 `
+
+const PERIOD_SUMMARY_SQL = `
+  SELECT
+    COALESCE(SUM(amount_poisha), 0) as total,
+    COUNT(*) as count
+  FROM payments WHERE payment_date BETWEEN ? AND ?
+`
+
+function getWeekRange(dateStr: string): [string, string] {
+  const d = new Date(dateStr + 'T00:00:00')
+  const day = d.getDay()
+  const diff = day >= 6 ? 0 : day + 1
+  const sat = new Date(d)
+  sat.setDate(d.getDate() - diff)
+  const fri = new Date(sat)
+  fri.setDate(sat.getDate() + 6)
+  return [dateToISO(sat), dateToISO(fri)]
+}
+
+function getMonthRange(dateStr: string): [string, string] {
+  const d = new Date(dateStr + 'T00:00:00')
+  const first = new Date(d.getFullYear(), d.getMonth(), 1)
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0)
+  return [dateToISO(first), dateToISO(last)]
+}
 
 interface FormState {
   customerId: string
@@ -90,10 +118,32 @@ export function PaymentsPage() {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<FormState>(defaultForm())
   const [saving, setSaving] = useState(false)
+  const [editId, setEditId] = useState<string | null>(null)
+
+  // Password dialog state
+  const [pwDialog, setPwDialog] = useState<{ action: 'edit' | 'delete'; payment: PaymentRow } | null>(null)
+  const [pw, setPw] = useState('')
+  const [pwError, setPwError] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const { data: payments, loading, refetch } = useQuery<PaymentRow>(PAYMENTS_SQL, [selectedDate], [selectedDate])
   const { data: summaryRows } = useQuery<{ day_total: number; day_count: number }>(SUMMARY_SQL, [selectedDate], [selectedDate])
   const summary = summaryRows[0] ?? { day_total: 0, day_count: 0 }
+
+  const [weekStart, weekEnd] = getWeekRange(selectedDate)
+  const [monthStart, monthEnd] = getMonthRange(selectedDate)
+  const { data: weekRows } = useQuery<{ total: number; count: number }>(PERIOD_SUMMARY_SQL, [weekStart, weekEnd], [weekStart, weekEnd])
+  const { data: monthRows } = useQuery<{ total: number; count: number }>(PERIOD_SUMMARY_SQL, [monthStart, monthEnd], [monthStart, monthEnd])
+  const weekSummary = weekRows[0] ?? { total: 0, count: 0 }
+  const monthSummary = monthRows[0] ?? { total: 0, count: 0 }
+
+  const weekLabel = (() => {
+    const s = new Date(weekStart + 'T00:00:00')
+    const e = new Date(weekEnd + 'T00:00:00')
+    const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    return `${fmt(s)} – ${fmt(e)}`
+  })()
+  const monthLabel = new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 
   const { data: customers, loading: customersLoading } = useQuery<CustomerRow>(
     `SELECT id, name, organization FROM customers ORDER BY COALESCE(organization, name)`, [], []
@@ -110,7 +160,43 @@ export function PaymentsPage() {
 
   function handleOpenChange(val: boolean) {
     setOpen(val)
-    if (!val) setForm(defaultForm())
+    if (!val) { setForm(defaultForm()); setEditId(null) }
+  }
+
+  function handlePasswordSubmit() {
+    if (pw !== ACTION_PASSWORD) {
+      setPwError(true)
+      return
+    }
+    const { action, payment } = pwDialog!
+    setPwDialog(null)
+    setPw('')
+    setPwError(false)
+
+    if (action === 'edit') {
+      setEditId(payment.id)
+      setForm({
+        customerId: payment.customer_id,
+        customerFilter: '',
+        amount: String(poishaToBdt(payment.amount_poisha)),
+        method: payment.payment_method,
+        notes: payment.notes ?? '',
+      })
+      setOpen(true)
+    } else {
+      handleDelete(payment.id)
+    }
+  }
+
+  async function handleDelete(paymentId: string) {
+    setDeleting(true)
+    try {
+      await dbRun(`DELETE FROM payments WHERE id = ?`, [paymentId])
+      addToast({ title: 'Payment deleted' })
+      refetch()
+    } catch (err: any) {
+      addToast({ title: 'Error', description: err.message, variant: 'destructive' })
+    } finally { setDeleting(false) }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -124,13 +210,22 @@ export function PaymentsPage() {
     }
     setSaving(true)
     try {
-      await dbRun(
-        `INSERT INTO payments (id, customer_id, amount_poisha, payment_date, payment_method, notes) VALUES (?, ?, ?, ?, ?, ?)`,
-        [uuid(), form.customerId, bdtToPoisha(amountNum), selectedDate, form.method, form.notes.trim() || null]
-      )
-      addToast({ title: 'Payment recorded', description: `${formatBDT(bdtToPoisha(amountNum))} saved.` })
+      if (editId) {
+        await dbRun(
+          `UPDATE payments SET customer_id = ?, amount_poisha = ?, payment_method = ?, notes = ? WHERE id = ?`,
+          [form.customerId, bdtToPoisha(amountNum), form.method, form.notes.trim() || null, editId]
+        )
+        addToast({ title: 'Payment updated', description: `${formatBDT(bdtToPoisha(amountNum))} saved.` })
+      } else {
+        await dbRun(
+          `INSERT INTO payments (id, customer_id, amount_poisha, payment_date, payment_method, notes) VALUES (?, ?, ?, ?, ?, ?)`,
+          [uuid(), form.customerId, bdtToPoisha(amountNum), selectedDate, form.method, form.notes.trim() || null]
+        )
+        addToast({ title: 'Payment recorded', description: `${formatBDT(bdtToPoisha(amountNum))} saved.` })
+      }
       setOpen(false)
       setForm(defaultForm())
+      setEditId(null)
       refetch()
     } catch (err: any) {
       addToast({ title: 'Error', description: err.message, variant: 'destructive' })
@@ -146,7 +241,7 @@ export function PaymentsPage() {
             <Button size="sm">Record Payment</Button>
           </DialogTrigger>
           <DialogContent className="max-w-md">
-            <DialogHeader><DialogTitle>Record Payment — {formatDate(selectedDate)}</DialogTitle></DialogHeader>
+            <DialogHeader><DialogTitle>{editId ? 'Edit Payment' : `Record Payment — ${formatDate(selectedDate)}`}</DialogTitle></DialogHeader>
             <form onSubmit={handleSubmit} className="flex flex-col gap-4 pt-2">
               <div className="flex flex-col gap-1.5">
                 <Label>Customer</Label>
@@ -186,7 +281,7 @@ export function PaymentsPage() {
               </div>
               <div className="flex justify-end gap-2 pt-1">
                 <DialogClose asChild><Button type="button" variant="outline" disabled={saving}>Cancel</Button></DialogClose>
-                <Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save Payment'}</Button>
+                <Button type="submit" disabled={saving}>{saving ? 'Saving…' : editId ? 'Update Payment' : 'Save Payment'}</Button>
               </div>
             </form>
           </DialogContent>
@@ -217,15 +312,21 @@ export function PaymentsPage() {
         <Input placeholder="Filter by customer..." value={customerFilter} onChange={e => setCustomerFilter(e.target.value)} className="max-w-xs h-8" />
       </div>
 
-      {/* Day summary */}
-      <div className="grid grid-cols-2 gap-3">
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Card><CardContent className="pt-3 pb-2">
-          <div className="text-[10px] text-muted-foreground uppercase">Payments</div>
-          <div className="text-xl font-bold tabular-nums">{summary.day_count}</div>
+          <div className="text-[10px] text-muted-foreground uppercase">Today ({summary.day_count})</div>
+          <div className="text-xl font-bold tabular-nums">{formatBDT(summary.day_total)}</div>
         </CardContent></Card>
         <Card><CardContent className="pt-3 pb-2">
-          <div className="text-[10px] text-muted-foreground uppercase">Total Collected</div>
-          <div className="text-xl font-bold tabular-nums">{formatBDT(summary.day_total)}</div>
+          <div className="text-[10px] text-muted-foreground uppercase">Week ({weekSummary.count})</div>
+          <div className="text-lg font-bold tabular-nums">{formatBDT(weekSummary.total)}</div>
+          <div className="text-[10px] text-muted-foreground">{weekLabel}</div>
+        </CardContent></Card>
+        <Card><CardContent className="pt-3 pb-2">
+          <div className="text-[10px] text-muted-foreground uppercase">Month ({monthSummary.count})</div>
+          <div className="text-lg font-bold tabular-nums">{formatBDT(monthSummary.total)}</div>
+          <div className="text-[10px] text-muted-foreground">{monthLabel}</div>
         </CardContent></Card>
       </div>
 
@@ -247,6 +348,7 @@ export function PaymentsPage() {
                   <TableHead className="text-right">Amount</TableHead>
                   <TableHead>Method</TableHead>
                   <TableHead>Notes</TableHead>
+                  <TableHead className="w-20"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -259,6 +361,18 @@ export function PaymentsPage() {
                       <Badge variant="outline" className="text-[10px] px-1.5 py-0">{METHOD_LABELS[p.payment_method] ?? p.payment_method}</Badge>
                     </TableCell>
                     <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground">{p.notes ?? '—'}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" className="h-7 w-7"
+                          onClick={() => { setPwDialog({ action: 'edit', payment: p }); setPw(''); setPwError(false) }}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
+                          onClick={() => { setPwDialog({ action: 'delete', payment: p }); setPw(''); setPwError(false) }}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -266,6 +380,35 @@ export function PaymentsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Password confirmation dialog */}
+      <Dialog open={!!pwDialog} onOpenChange={v => { if (!v) { setPwDialog(null); setPw(''); setPwError(false) } }}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader>
+            <DialogTitle>{pwDialog?.action === 'delete' ? 'Delete Payment' : 'Edit Payment'}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={e => { e.preventDefault(); handlePasswordSubmit() }} className="flex flex-col gap-3 pt-2">
+            <p className="text-sm text-muted-foreground">
+              Enter password to {pwDialog?.action === 'delete' ? 'delete' : 'edit'} this payment
+              {pwDialog && <> of <span className="font-semibold text-foreground">{formatBDT(pwDialog.payment.amount_poisha)}</span></>}.
+            </p>
+            <Input
+              type="password"
+              placeholder="Password"
+              value={pw}
+              onChange={e => { setPw(e.target.value); setPwError(false) }}
+              autoFocus
+            />
+            {pwError && <p className="text-xs text-destructive">Incorrect password.</p>}
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => { setPwDialog(null); setPw(''); setPwError(false) }}>Cancel</Button>
+              <Button type="submit" size="sm" variant={pwDialog?.action === 'delete' ? 'destructive' : 'default'} disabled={deleting}>
+                {pwDialog?.action === 'delete' ? 'Delete' : 'Continue'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
