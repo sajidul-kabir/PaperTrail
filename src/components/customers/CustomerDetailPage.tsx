@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { dbRun } from '@/lib/ipc'
 import { useQuery } from '@/hooks/useQuery'
 import { v4 as uuid } from 'uuid'
@@ -25,6 +25,7 @@ interface CustomerDetail {
   organization: string | null
   phone: string | null
   address: string | null
+  previous_balance_poisha: number
   balance_poisha: number
 }
 
@@ -42,6 +43,16 @@ interface PaymentRow {
   amount_poisha: number
   payment_method: string
   notes: string | null
+}
+
+// History: a day where the customer had invoices and/or payments
+interface HistoryBilledRow {
+  the_date: string
+  billed: number
+}
+interface HistoryPaidRow {
+  the_date: string
+  paid: number
 }
 
 type PaymentMethod = 'CASH' | 'BANK_TRANSFER' | 'CHECK' | 'OTHER'
@@ -104,6 +115,63 @@ export function CustomerDetailPage() {
     [id],
     [id]
   )
+
+  // History tab: daily billed amounts
+  const { data: historyBilled, loading: historyBilledLoading } = useQuery<HistoryBilledRow>(
+    `SELECT i.invoice_date as the_date, SUM(i.total_poisha) as billed
+     FROM invoices i
+     WHERE i.customer_id = ? AND i.status = 'ACTIVE'
+     GROUP BY i.invoice_date`,
+    [id], [id]
+  )
+
+  // History tab: daily paid amounts
+  const { data: historyPaid, loading: historyPaidLoading } = useQuery<HistoryPaidRow>(
+    `SELECT p.payment_date as the_date, SUM(p.amount_poisha) as paid
+     FROM payments p
+     WHERE p.customer_id = ?
+     GROUP BY p.payment_date`,
+    [id], [id]
+  )
+
+  // All-time totals for the summary card
+  const allTimeBilled = useMemo(() => invoices.reduce((s, i) => s + (i.status === 'ACTIVE' ? i.total_poisha : 0), 0), [invoices])
+  const allTimePaid = useMemo(() => payments.reduce((s, p) => s + p.amount_poisha, 0), [payments])
+
+  // Merge billed + paid into a single day-by-day history sorted DESC, with running balance
+  const historyRows = useMemo(() => {
+    const customer = customerRows[0]
+    if (!customer) return []
+
+    const dayMap = new Map<string, { billed: number; paid: number }>()
+    for (const r of historyBilled) {
+      const e = dayMap.get(r.the_date) ?? { billed: 0, paid: 0 }
+      e.billed += r.billed
+      dayMap.set(r.the_date, e)
+    }
+    for (const r of historyPaid) {
+      const e = dayMap.get(r.the_date) ?? { billed: 0, paid: 0 }
+      e.paid += r.paid
+      dayMap.set(r.the_date, e)
+    }
+
+    // Sort ascending by date for running balance calculation
+    const sorted = Array.from(dayMap.entries())
+      .map(([date, v]) => ({ date, billed: v.billed, paid: v.paid }))
+      .sort((a, b) => a.date.localeCompare(b.date))
+
+    // Running balance: start from previous_balance, add billed, subtract paid
+    let running = customer.previous_balance_poisha ?? 0
+    const rows = sorted.map(r => {
+      running += r.billed - r.paid
+      return { ...r, balance: running }
+    })
+
+    // Return descending (latest first)
+    return rows.reverse()
+  }, [customerRows, historyBilled, historyPaid])
+
+  const historyLoading = historyBilledLoading || historyPaidLoading
 
   // Payment dialog state
   const [payDialogOpen, setPayDialogOpen] = useState(false)
@@ -243,12 +311,99 @@ export function CustomerDetailPage() {
         </CardContent>
       </Card>
 
-      {/* Tabs: Invoices / Payments */}
-      <Tabs defaultValue="invoices">
+      {/* Total Transactions card */}
+      <div className="grid grid-cols-3 gap-3">
+        <Card>
+          <CardContent className="pt-3 pb-2">
+            <div className="text-[10px] text-muted-foreground uppercase">All-Time Billed</div>
+            <div className="text-lg font-bold tabular-nums">{formatBDT(allTimeBilled)}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-3 pb-2">
+            <div className="text-[10px] text-muted-foreground uppercase">All-Time Paid</div>
+            <div className="text-lg font-bold tabular-nums">{formatBDT(allTimePaid)}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-3 pb-2">
+            <div className="text-[10px] text-muted-foreground uppercase">Previous Balance</div>
+            <div className="text-lg font-bold tabular-nums text-muted-foreground">
+              {customer.previous_balance_poisha ? formatBDT(customer.previous_balance_poisha) : '৳0.00'}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Tabs: History / Orders / Payments */}
+      <Tabs defaultValue="history">
         <TabsList>
+          <TabsTrigger value="history">History</TabsTrigger>
           <TabsTrigger value="invoices">Orders</TabsTrigger>
           <TabsTrigger value="payments">Payments</TabsTrigger>
         </TabsList>
+
+        {/* ------------------------------------------------------------------ */}
+        {/* History tab (Tally Khata)                                           */}
+        {/* ------------------------------------------------------------------ */}
+        <TabsContent value="history" className="mt-3">
+          <Card>
+            <CardContent className="p-0">
+              {historyLoading ? (
+                <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
+                  Loading…
+                </div>
+              ) : historyRows.length === 0 ? (
+                <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
+                  No transaction history yet.
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead className="text-right">Billed</TableHead>
+                      <TableHead className="text-right">Paid</TableHead>
+                      <TableHead className="text-right">Balance</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {historyRows.map(row => (
+                      <TableRow key={row.date}>
+                        <TableCell className="text-sm whitespace-nowrap">{formatDate(row.date)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">
+                          {row.billed > 0 ? formatBDT(row.billed) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-sm text-profit-good">
+                          {row.paid > 0 ? formatBDT(row.paid) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell className={`text-right tabular-nums text-sm font-semibold ${
+                          row.balance > 0 ? 'text-profit-loss' : row.balance < 0 ? 'text-profit-good' : ''
+                        }`}>
+                          {formatBDT(Math.abs(row.balance))}
+                          {row.balance < 0 && <span className="text-xs font-normal ml-0.5">(cr)</span>}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {/* Show previous balance as starting row if non-zero */}
+                    {(customer.previous_balance_poisha ?? 0) !== 0 && (
+                      <TableRow className="border-t-2">
+                        <TableCell className="text-sm text-muted-foreground italic">Opening Balance</TableCell>
+                        <TableCell></TableCell>
+                        <TableCell></TableCell>
+                        <TableCell className={`text-right tabular-nums text-sm font-semibold ${
+                          customer.previous_balance_poisha > 0 ? 'text-profit-loss' : 'text-profit-good'
+                        }`}>
+                          {formatBDT(Math.abs(customer.previous_balance_poisha))}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         {/* ------------------------------------------------------------------ */}
         {/* Invoices tab                                                        */}

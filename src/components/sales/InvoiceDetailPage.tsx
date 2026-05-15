@@ -26,6 +26,7 @@ interface InvoiceHeader {
   id: string
   invoice_number: string
   invoice_date: string
+  created_at: string
   customer_name: string
   customer_organization: string | null
   customer_id: string
@@ -62,6 +63,7 @@ const INVOICE_SQL = `
   SELECT i.id,
          i.invoice_number,
          i.invoice_date,
+         i.created_at,
          c.name  AS customer_name,
          c.organization AS customer_organization,
          i.customer_id,
@@ -270,16 +272,17 @@ export function InvoiceDetailPage() {
 
   const handlePrint = async () => {
     if (!invoice) return
-    // Look up outstanding balance for this customer
+    // Calculate outstanding as it was just before this bill was created
+    // = previous_balance + invoices created before this one - payments up to this bill's date
     let outstanding = 0
     try {
       const rows = await dbQuery<{ bal: number }>(`
         SELECT COALESCE(c.previous_balance_poisha, 0) +
-          COALESCE((SELECT SUM(i.total_poisha) FROM invoices i WHERE i.customer_id = c.id AND i.status = 'ACTIVE'), 0) -
-          COALESCE((SELECT SUM(p.amount_poisha) FROM payments p WHERE p.customer_id = c.id), 0) as bal
+          COALESCE((SELECT SUM(i.total_poisha) FROM invoices i WHERE i.customer_id = c.id AND i.status = 'ACTIVE' AND i.created_at < ?), 0) -
+          COALESCE((SELECT SUM(p.amount_poisha) FROM payments p WHERE p.customer_id = c.id AND p.created_at < ?), 0) as bal
         FROM customers c WHERE c.id = ?
-      `, [invoice.customer_id])
-      outstanding = Math.max(0, (rows[0]?.bal ?? 0) - invoice.total_poisha)
+      `, [invoice.created_at, invoice.created_at, invoice.customer_id])
+      outstanding = Math.max(0, rows[0]?.bal ?? 0)
     } catch { /* ignore */ }
 
     const customerDisplay = invoice.customer_organization || invoice.customer_name

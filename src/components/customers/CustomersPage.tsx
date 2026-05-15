@@ -178,6 +178,26 @@ export function CustomersPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Total outstanding */}
+      {!loading && customers.length > 0 && (() => {
+        const totalOutstanding = customers.reduce((sum, c) => sum + (c.balance_poisha > 0 ? c.balance_poisha : 0), 0)
+        const totalOverpaid = customers.reduce((sum, c) => sum + (c.balance_poisha < 0 ? Math.abs(c.balance_poisha) : 0), 0)
+        return (
+          <div className="grid grid-cols-2 gap-3">
+            <Card><CardContent className="pt-3 pb-2">
+              <div className="text-[10px] text-muted-foreground uppercase">Total Outstanding</div>
+              <div className="text-xl font-bold tabular-nums text-profit-loss">{formatBDT(totalOutstanding)}</div>
+            </CardContent></Card>
+            {totalOverpaid > 0 && (
+              <Card><CardContent className="pt-3 pb-2">
+                <div className="text-[10px] text-muted-foreground uppercase">Total Overpaid</div>
+                <div className="text-xl font-bold tabular-nums text-profit-good">{formatBDT(totalOverpaid)}</div>
+              </CardContent></Card>
+            )}
+          </div>
+        )
+      })()}
+
       <Card>
         <CardHeader className="pb-2"><CardTitle>All Customers</CardTitle></CardHeader>
         <CardContent className="p-0">

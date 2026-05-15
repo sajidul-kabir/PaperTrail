@@ -1,71 +1,79 @@
-import { useState } from 'react'
-import { useQuery } from '@/hooks/useQuery'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Calendar } from '@/components/ui/calendar'
-import * as Popover from '@radix-ui/react-popover'
-import { formatBDT, formatDate, profitColor, todayISO } from '@/lib/utils'
-import { useNavigate } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, CalendarDays } from 'lucide-react'
+import { useState } from "react";
+import { useQuery } from "@/hooks/useQuery";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
+import * as Popover from "@radix-ui/react-popover";
+import { formatBDT, formatDate, profitColor, todayISO } from "@/lib/utils";
+import { useNavigate } from "react-router-dom";
+import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
 
 interface DaySummaryRow {
-  day_sales_poisha: number
-  day_profit_poisha: number
-  day_avg_margin: number
-  day_invoice_count: number
+  day_sales_poisha: number;
+  day_profit_poisha: number;
+  day_avg_margin: number;
+  day_invoice_count: number;
 }
 
 interface DayInvoiceRow {
-  id: string
-  invoice_number: string
-  invoice_date: string
-  customer_name: string
-  total_poisha: number
-  profit_poisha: number
-  avg_margin_pct: number
-  status: 'ACTIVE' | 'VOID'
+  id: string;
+  invoice_number: string;
+  invoice_date: string;
+  customer_name: string;
+  total_poisha: number;
+  profit_poisha: number;
+  avg_margin_pct: number;
+  status: "ACTIVE" | "VOID";
 }
 
 interface LowStockRow {
-  paper_type_id: string
-  paper_type_label: string
-  total_reams: number
-  threshold_reams: number
+  paper_type_id: string;
+  paper_type_label: string;
+  total_reams: number;
+  threshold_reams: number;
 }
 
 function shiftDate(dateStr: string, days: number): string {
-  const d = new Date(dateStr + 'T00:00:00')
-  d.setDate(d.getDate() + days)
-  const year = d.getFullYear()
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function dateToISO(d: Date): string {
-  const year = d.getFullYear()
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function isoToDate(s: string): Date {
-  const [y, m, d] = s.split('-').map(Number)
-  return new Date(y, m - 1, d)
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, m - 1, d);
 }
 
 export function DashboardPage() {
-  const navigate = useNavigate()
-  const today = todayISO()
-  const [selectedDate, setSelectedDate] = useState(today)
-  const [calendarOpen, setCalendarOpen] = useState(false)
+  const navigate = useNavigate();
+  const today = todayISO();
+  const [selectedDate, setSelectedDate] = useState(today);
+  const [calendarOpen, setCalendarOpen] = useState(false);
 
-  const isToday = selectedDate === today
+  const isToday = selectedDate === today;
 
-  const { data: summaryRows, loading: summaryLoading } = useQuery<DaySummaryRow>(
-    `SELECT
+  const { data: summaryRows, loading: summaryLoading } =
+    useQuery<DaySummaryRow>(
+      `SELECT
        COALESCE(SUM(CASE WHEN i.status = 'ACTIVE' THEN i.total_poisha ELSE 0 END), 0) AS day_sales_poisha,
        COALESCE(SUM(CASE WHEN i.status = 'ACTIVE' THEN il_agg.profit_poisha ELSE 0 END), 0) AS day_profit_poisha,
        COALESCE(AVG(CASE WHEN i.status = 'ACTIVE' THEN il_agg.avg_margin_pct END), 0) AS day_avg_margin,
@@ -79,12 +87,13 @@ export function DashboardPage() {
        GROUP BY invoice_id
      ) il_agg ON il_agg.invoice_id = i.id
      WHERE i.invoice_date = ?`,
-    [selectedDate],
-    [selectedDate]
-  )
+      [selectedDate],
+      [selectedDate],
+    );
 
-  const { data: dayInvoices, loading: invoicesLoading } = useQuery<DayInvoiceRow>(
-    `SELECT
+  const { data: dayInvoices, loading: invoicesLoading } =
+    useQuery<DayInvoiceRow>(
+      `SELECT
        i.id,
        i.invoice_number,
        i.invoice_date,
@@ -104,9 +113,9 @@ export function DashboardPage() {
      ) il_agg ON il_agg.invoice_id = i.id
      WHERE i.invoice_date = ?
      ORDER BY i.created_at DESC`,
-    [selectedDate],
-    [selectedDate]
-  )
+      [selectedDate],
+      [selectedDate],
+    );
 
   const { data: lowStockRows, loading: stockLoading } = useQuery<LowStockRow>(
     `WITH threshold AS (
@@ -131,15 +140,37 @@ export function DashboardPage() {
      WHERE s.total_reams < t.threshold_reams
      ORDER BY s.total_reams ASC`,
     [],
-    []
-  )
+    [],
+  );
 
   const summary = summaryRows[0] ?? {
     day_sales_poisha: 0,
     day_profit_poisha: 0,
     day_avg_margin: 0,
     day_invoice_count: 0,
-  }
+  };
+
+  // Total outstanding from customers (receivable)
+  const { data: receivableRows } = useQuery<{ total: number }>(
+    `SELECT COALESCE(SUM(bal), 0) as total FROM (
+      SELECT COALESCE(c.previous_balance_poisha, 0) +
+        COALESCE((SELECT SUM(total_poisha) FROM invoices WHERE customer_id = c.id AND status = 'ACTIVE'), 0) -
+        COALESCE((SELECT SUM(amount_poisha) FROM payments WHERE customer_id = c.id), 0) as bal
+      FROM customers c WHERE c.is_walk_in = 0
+    ) WHERE bal > 0`,
+  );
+  const totalReceivable = receivableRows[0]?.total ?? 0;
+
+  // Total owed to suppliers (payable)
+  const { data: payableRows } = useQuery<{ total: number }>(
+    `SELECT COALESCE(SUM(due), 0) as total FROM (
+      SELECT s.previous_outstanding_poisha +
+        COALESCE((SELECT SUM(CAST(cost_per_ream_poisha AS REAL) * quantity_reams) FROM purchases WHERE supplier_id = s.id), 0) -
+        COALESCE((SELECT SUM(amount_poisha) FROM supplier_payments WHERE supplier_id = s.id), 0) as due
+      FROM suppliers s
+    ) WHERE due > 0`,
+  );
+  const totalPayable = payableRows[0]?.total ?? 0;
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -158,7 +189,10 @@ export function DashboardPage() {
           </Button>
           <Popover.Root open={calendarOpen} onOpenChange={setCalendarOpen}>
             <Popover.Trigger asChild>
-              <Button variant="outline" className="h-8 gap-2 px-3 text-sm font-medium">
+              <Button
+                variant="outline"
+                className="h-8 gap-2 px-3 text-sm font-medium"
+              >
                 <CalendarDays className="h-4 w-4" />
                 {formatDate(selectedDate)}
               </Button>
@@ -173,8 +207,8 @@ export function DashboardPage() {
                   selected={isoToDate(selectedDate)}
                   maxDate={isoToDate(today)}
                   onSelect={(d) => {
-                    setSelectedDate(dateToISO(d))
-                    setCalendarOpen(false)
+                    setSelectedDate(dateToISO(d));
+                    setCalendarOpen(false);
                   }}
                 />
               </Popover.Content>
@@ -205,33 +239,43 @@ export function DashboardPage() {
 
       {/* Day label */}
       <div className="text-sm text-muted-foreground">
-        {isToday ? "Today's Summary" : `Summary for ${formatDate(selectedDate)}`}
+        {isToday
+          ? "Today's Summary"
+          : `Summary for ${formatDate(selectedDate)}`}
       </div>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Card>
           <CardHeader className="pb-1">
-            <CardTitle className="text-xs text-muted-foreground uppercase tracking-wide">Sales</CardTitle>
+            <CardTitle className="text-xs text-muted-foreground uppercase tracking-wide">
+              Sales
+            </CardTitle>
           </CardHeader>
           <CardContent>
             {summaryLoading ? (
               <div className="h-7 w-24 animate-pulse rounded bg-muted" />
             ) : (
-              <p className="text-xl font-bold tabular-nums">{formatBDT(summary.day_sales_poisha)}</p>
+              <p className="text-xl font-bold tabular-nums">
+                {formatBDT(summary.day_sales_poisha)}
+              </p>
             )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-1">
-            <CardTitle className="text-xs text-muted-foreground uppercase tracking-wide">Profit</CardTitle>
+            <CardTitle className="text-xs text-muted-foreground uppercase tracking-wide">
+              Profit
+            </CardTitle>
           </CardHeader>
           <CardContent>
             {summaryLoading ? (
               <div className="h-7 w-24 animate-pulse rounded bg-muted" />
             ) : (
-              <p className={`text-xl font-bold tabular-nums ${profitColor(summary.day_avg_margin)}`}>
+              <p
+                className={`text-xl font-bold tabular-nums ${profitColor(summary.day_avg_margin)}`}
+              >
                 {formatBDT(summary.day_profit_poisha)}
               </p>
             )}
@@ -240,29 +284,37 @@ export function DashboardPage() {
 
         <Card>
           <CardHeader className="pb-1">
-            <CardTitle className="text-xs text-muted-foreground uppercase tracking-wide">Avg Margin</CardTitle>
+            <CardTitle className="text-xs text-muted-foreground uppercase tracking-wide">
+              Total Receivable
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            {summaryLoading ? (
-              <div className="h-7 w-16 animate-pulse rounded bg-muted" />
-            ) : (
-              <p className={`text-xl font-bold tabular-nums ${profitColor(summary.day_avg_margin)}`}>
-                {summary.day_avg_margin.toFixed(1)}%
-              </p>
-            )}
+            <p
+              className={`text-xl font-bold tabular-nums ${totalReceivable > 0 ? "text-profit-loss" : ""}`}
+            >
+              {formatBDT(totalReceivable)}
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              Customers owe you
+            </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-1">
-            <CardTitle className="text-xs text-muted-foreground uppercase tracking-wide">Orders</CardTitle>
+            <CardTitle className="text-xs text-muted-foreground uppercase tracking-wide">
+              Total Payable
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            {summaryLoading ? (
-              <div className="h-7 w-10 animate-pulse rounded bg-muted" />
-            ) : (
-              <p className="text-xl font-bold tabular-nums">{summary.day_invoice_count}</p>
-            )}
+            <p
+              className={`text-xl font-bold tabular-nums ${totalPayable > 0 ? "text-orange-600" : ""}`}
+            >
+              {formatBDT(totalPayable)}
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              You owe suppliers
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -272,11 +324,17 @@ export function DashboardPage() {
         <div className="xl:col-span-2">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle>{isToday ? "Today's Orders" : `Orders on ${formatDate(selectedDate)}`}</CardTitle>
+              <CardTitle>
+                {isToday
+                  ? "Today's Orders"
+                  : `Orders on ${formatDate(selectedDate)}`}
+              </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
               {invoicesLoading ? (
-                <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">Loading...</div>
+                <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
+                  Loading...
+                </div>
               ) : dayInvoices.length === 0 ? (
                 <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
                   No orders on this date.
@@ -300,20 +358,42 @@ export function DashboardPage() {
                         className="cursor-pointer"
                         onClick={() => navigate(`/bills/${inv.id}`)}
                       >
-                        <TableCell className="font-mono text-xs font-medium">{inv.invoice_number}</TableCell>
-                        <TableCell className="max-w-[160px] truncate text-sm">{inv.customer_name}</TableCell>
-                        <TableCell className="text-right tabular-nums text-sm">{formatBDT(inv.total_poisha)}</TableCell>
-                        <TableCell className={`text-right tabular-nums text-sm ${inv.status === 'VOID' ? 'text-muted-foreground line-through' : profitColor(inv.avg_margin_pct)}`}>
+                        <TableCell className="font-mono text-xs font-medium">
+                          {inv.invoice_number}
+                        </TableCell>
+                        <TableCell className="max-w-[160px] truncate text-sm">
+                          {inv.customer_name}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">
+                          {formatBDT(inv.total_poisha)}
+                        </TableCell>
+                        <TableCell
+                          className={`text-right tabular-nums text-sm ${inv.status === "VOID" ? "text-muted-foreground line-through" : profitColor(inv.avg_margin_pct)}`}
+                        >
                           {formatBDT(inv.profit_poisha)}
                         </TableCell>
-                        <TableCell className={`text-right tabular-nums text-sm ${inv.status === 'VOID' ? 'text-muted-foreground' : profitColor(inv.avg_margin_pct)}`}>
-                          {inv.status === 'VOID' ? '—' : `${inv.avg_margin_pct.toFixed(1)}%`}
+                        <TableCell
+                          className={`text-right tabular-nums text-sm ${inv.status === "VOID" ? "text-muted-foreground" : profitColor(inv.avg_margin_pct)}`}
+                        >
+                          {inv.status === "VOID"
+                            ? "—"
+                            : `${inv.avg_margin_pct.toFixed(1)}%`}
                         </TableCell>
                         <TableCell>
-                          {inv.status === 'VOID' ? (
-                            <Badge variant="destructive" className="text-[10px] px-1.5 py-0">VOID</Badge>
+                          {inv.status === "VOID" ? (
+                            <Badge
+                              variant="destructive"
+                              className="text-[10px] px-1.5 py-0"
+                            >
+                              VOID
+                            </Badge>
                           ) : (
-                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Active</Badge>
+                            <Badge
+                              variant="secondary"
+                              className="text-[10px] px-1.5 py-0"
+                            >
+                              Active
+                            </Badge>
                           )}
                         </TableCell>
                       </TableRow>
@@ -332,7 +412,10 @@ export function DashboardPage() {
               <div className="flex items-center justify-between">
                 <CardTitle>Low Stock Alerts</CardTitle>
                 {!stockLoading && lowStockRows.length > 0 && (
-                  <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
+                  <Badge
+                    variant="destructive"
+                    className="text-[10px] px-1.5 py-0"
+                  >
                     {lowStockRows.length}
                   </Badge>
                 )}
@@ -340,9 +423,13 @@ export function DashboardPage() {
             </CardHeader>
             <CardContent className="p-0">
               {stockLoading ? (
-                <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">Loading...</div>
+                <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
+                  Loading...
+                </div>
               ) : lowStockRows.length === 0 ? (
-                <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">All stock levels OK.</div>
+                <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
+                  All stock levels OK.
+                </div>
               ) : (
                 <Table>
                   <TableHeader>
@@ -357,11 +444,17 @@ export function DashboardPage() {
                       <TableRow
                         key={row.paper_type_id}
                         className="cursor-pointer"
-                        onClick={() => navigate('/godown')}
+                        onClick={() => navigate("/godown")}
                       >
-                        <TableCell className="text-xs leading-tight">{row.paper_type_label}</TableCell>
-                        <TableCell className={`text-right tabular-nums text-sm font-semibold ${row.total_reams <= 0 ? 'text-profit-loss' : 'text-profit-thin'}`}>
-                          {row.total_reams <= 0 ? 'Out' : row.total_reams.toFixed(1)}
+                        <TableCell className="text-xs leading-tight">
+                          {row.paper_type_label}
+                        </TableCell>
+                        <TableCell
+                          className={`text-right tabular-nums text-sm font-semibold ${row.total_reams <= 0 ? "text-profit-loss" : "text-profit-thin"}`}
+                        >
+                          {row.total_reams <= 0
+                            ? "Out"
+                            : row.total_reams.toFixed(1)}
                         </TableCell>
                         <TableCell className="text-right tabular-nums text-xs text-muted-foreground">
                           {row.threshold_reams}
@@ -376,5 +469,5 @@ export function DashboardPage() {
         </div>
       </div>
     </div>
-  )
+  );
 }
